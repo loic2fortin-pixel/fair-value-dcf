@@ -1,0 +1,974 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fair Value</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏈</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f4e8;
+    --surface: #ffffff;
+    --surface-2: #eee9d6;
+    --ink: #14170f;
+    --ink-muted: #5c6350;
+    --ink-faint: #8b9280;
+    --border: #ddd6ba;
+    --accent: #b6790c;
+    --accent-ink: #ffffff;
+    --accent-soft: #f5e6c3;
+    --info: #2f5fb0;
+    --info-soft: #dde8fa;
+    --good: #1f8b4c;
+    --good-soft: #dcf0e3;
+    --warn: #c1650f;
+    --warn-soft: #fbe6d4;
+    --critical: #c23434;
+    --critical-soft: #fae0df;
+    --shadow: 0 1px 2px rgba(20,23,15,0.08), 0 8px 24px -12px rgba(20,23,15,0.22);
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0e120d;
+      --surface: #161b13;
+      --surface-2: #1d2418;
+      --ink: #f4f6ef;
+      --ink-muted: #9bA793;
+      --ink-faint: #66705f;
+      --border: #2a3223;
+      --accent: #f5b921;
+      --accent-ink: #17150a;
+      --accent-soft: #3a2f10;
+      --info: #6f9ce8;
+      --info-soft: #1c2c46;
+      --good: #3fae63;
+      --good-soft: #16301f;
+      --warn: #e8862e;
+      --warn-soft: #3a2510;
+      --critical: #e24b4b;
+      --critical-soft: #3a1414;
+      --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 8px 24px -12px rgba(0,0,0,0.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0e120d;
+    --surface: #161b13;
+    --surface-2: #1d2418;
+    --ink: #f4f6ef;
+    --ink-muted: #9bA793;
+    --ink-faint: #66705f;
+    --border: #2a3223;
+    --accent: #f5b921;
+    --accent-ink: #17150a;
+    --accent-soft: #3a2f10;
+    --info: #6f9ce8;
+    --info-soft: #1c2c46;
+    --good: #3fae63;
+    --good-soft: #16301f;
+    --warn: #e8862e;
+    --warn-soft: #3a2510;
+    --critical: #e24b4b;
+    --critical-soft: #3a1414;
+    --shadow: 0 1px 2px rgba(0,0,0,0.35), 0 8px 24px -12px rgba(0,0,0,0.6);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: auto; }
+  body {
+    margin: 0;
+    background:
+      repeating-linear-gradient(180deg, rgba(127,127,127,0.05) 0px, rgba(127,127,127,0.05) 1px, transparent 1px, transparent 64px),
+      var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 32px 20px 64px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .num { font-family: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .display { font-family: "Anton", "Barlow", system-ui, sans-serif; font-weight: 400; letter-spacing: 0.01em; text-transform: uppercase; }
+
+  header.page { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .mark { font-size: 24px; }
+  .brand h1 { font-family: "Anton", sans-serif; font-weight: 400; font-size: 26px; margin: 0; letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink); }
+  .brand .tag { color: var(--ink-muted); font-size: 13px; }
+  .theme-toggle { border: 1px solid var(--border); background: var(--surface); color: var(--ink-muted); border-radius: 8px; padding: 6px 10px; font-size: 11.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer; }
+  .theme-toggle:hover { color: var(--ink); border-color: var(--accent); }
+
+  /* Search */
+  .search-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); position: relative; }
+  .search-row { display: flex; gap: 10px; }
+  .search-row input { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--ink); }
+  .search-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .search-row button {
+    flex: none; white-space: nowrap; font-family: "Barlow", sans-serif; font-weight: 800; font-size: 14.5px;
+    letter-spacing: 0.05em; text-transform: uppercase; padding: 12px 20px; border-radius: 8px; border: none;
+    background: var(--accent); color: var(--accent-ink); cursor: pointer;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.25);
+  }
+  .search-row button:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,0.25); }
+  .search-row button:disabled { opacity: 0.5; cursor: default; }
+  .chips { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .chip {
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--ink-muted); border-radius: 6px;
+    padding: 5px 11px; font-size: 12px; font-weight: 700; letter-spacing: 0.03em; cursor: pointer; font-family: "IBM Plex Mono", monospace;
+  }
+  .chip:hover { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+  .dropdown { position: absolute; left: 18px; right: 18px; top: 68px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); z-index: 5; max-height: 260px; overflow-y: auto; }
+  .dropdown[hidden] { display: none; }
+  .dropdown button { display: flex; width: 100%; align-items: baseline; gap: 10px; text-align: left; border: none; background: none; padding: 10px 14px; cursor: pointer; color: var(--ink); font: inherit; border-bottom: 1px solid var(--border); }
+  .dropdown button:last-child { border-bottom: none; }
+  .dropdown button:hover, .dropdown button.active { background: var(--surface-2); }
+  .dropdown .t { font-family: "IBM Plex Mono", monospace; font-weight: 600; color: var(--accent); min-width: 52px; }
+  .dropdown .n { color: var(--ink-muted); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .status-line { margin-top: 10px; font-size: 13px; color: var(--ink-muted); min-height: 18px; }
+  .status-line.error { color: var(--critical); }
+
+  #results[hidden] { display: none; }
+  #results { margin-top: 24px; display: flex; flex-direction: column; gap: 18px; }
+
+  .co-header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .co-header .name { font-family: "Anton", sans-serif; font-weight: 400; font-size: 26px; letter-spacing: 0.015em; text-transform: uppercase; }
+  .co-header .meta { color: var(--ink-muted); font-size: 13px; font-family: "IBM Plex Mono", monospace; }
+  .co-header .price { text-align: right; }
+  .co-header .price .v { font-size: 24px; font-weight: 700; }
+  .co-header .price .l { color: var(--ink-muted); font-size: 12px; }
+
+  .warn-banner { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; padding: 12px 16px; font-size: 13.5px; line-height: 1.5; }
+  .warn-banner strong { display: block; margin-bottom: 2px; font-size: 13.5px; }
+  .warn-banner span { color: var(--ink); }
+
+  .card {
+    position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 22px 20px 20px; box-shadow: var(--shadow); overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+    background: repeating-linear-gradient(90deg, var(--accent) 0 14px, transparent 14px 24px);
+    opacity: 0.85;
+  }
+  .card h2 {
+    font-family: "Anton", sans-serif; font-weight: 400; font-size: 17px; text-transform: uppercase;
+    letter-spacing: 0.03em; color: var(--ink); margin: 0 0 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .card h2::before { content: ""; width: 8px; height: 8px; background: var(--accent); flex: none; transform: rotate(45deg); }
+
+  /* Verdict hero */
+  .verdict { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: center; }
+  @media (max-width: 620px) { .verdict { grid-template-columns: 1fr; } }
+  .verdict .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 13px; border-radius: 5px;
+    font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 12px;
+  }
+  .pill.good { background: var(--good-soft); color: var(--good); box-shadow: inset 0 0 0 1px var(--good); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+  .pill.critical { background: var(--critical-soft); color: var(--critical); box-shadow: inset 0 0 0 1px var(--critical); }
+  .verdict .figure { font-family: "Anton", sans-serif; font-weight: 400; font-size: 42px; letter-spacing: 0.01em; line-height: 1; }
+  .verdict .figure .cur { font-family: "IBM Plex Mono", monospace; font-size: 14px; color: var(--ink-muted); font-weight: 500; margin-left: 10px; text-transform: none; letter-spacing: 0; }
+  .verdict .sub { color: var(--ink-muted); font-size: 13.5px; margin-top: 6px; }
+  .verdict .explain { font-size: 14.5px; line-height: 1.6; }
+  .verdict .explain strong { color: var(--ink); }
+
+  /* Assumptions */
+  .assump-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px 22px; }
+  @media (max-width: 620px) { .assump-grid { grid-template-columns: 1fr; } }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 11.5px; font-weight: 600; color: var(--ink-muted); display: flex; justify-content: space-between; text-transform: uppercase; letter-spacing: 0.02em; }
+  .field label .val { font-family: "IBM Plex Mono", monospace; color: var(--accent); font-weight: 700; text-transform: none; letter-spacing: 0; font-size: 13px; }
+  .field .src { font-size: 11px; color: var(--ink-faint); }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+  /* Chart */
+  .chart-wrap svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; gap: 18px; margin-top: 10px; font-size: 12.5px; color: var(--ink-muted); }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+
+  /* Sensitivity */
+  table.sens { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.sens th, table.sens td { padding: 8px 10px; text-align: center; border: 1px solid var(--border); }
+  table.sens thead th { background: var(--surface-2); color: var(--ink-muted); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  table.sens tbody th { font-family: "IBM Plex Mono", monospace; color: var(--ink); background: var(--surface-2); }
+  table.sens td.val { font-family: "IBM Plex Mono", monospace; }
+  table.sens td.cur-row, table.sens th.cur-col { position: relative; }
+  .sens-scroll { overflow-x: auto; }
+  .sens-note { font-size: 12px; color: var(--ink-muted); margin-top: 10px; }
+  .football-caption {
+    font-size: 14.5px; line-height: 1.55; margin-top: 14px; padding: 12px 14px; background: var(--surface-2);
+    border-radius: 8px; border-left: 4px solid var(--accent);
+  }
+  .football-caption strong { color: var(--ink); }
+  .analogy { font-size: 12.5px; color: var(--ink-muted); font-style: italic; margin: -6px 0 14px; }
+  .card h2 + .analogy { margin-top: -8px; }
+
+  /* Comps */
+  .comps-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  @media (max-width: 480px) { .comps-grid { grid-template-columns: 1fr; } }
+  .comp-tile { background: var(--surface-2); border-radius: 8px; padding: 14px; border-top: 3px solid var(--accent); }
+  .comp-tile .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-muted); margin-bottom: 5px; }
+  .comp-tile .v { font-family: "IBM Plex Mono", monospace; font-size: 22px; font-weight: 700; color: var(--ink); }
+  .comp-tile .ref { font-size: 11.5px; color: var(--ink-faint); margin-top: 4px; }
+
+  footer { margin-top: 28px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
+  footer a { color: var(--ink-muted); }
+
+  .skeleton { color: var(--ink-muted); font-size: 13.5px; padding: 4px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <div class="brand">
+      <span class="mark">🏈</span>
+      <h1>Fair Value</h1>
+      <span class="tag">finance, called like football — real filings, no jargon huddle</span>
+    </div>
+    <button class="theme-toggle" id="themeToggle" type="button">Theme: System</button>
+  </header>
+
+  <div class="search-card">
+    <div class="search-row">
+      <input id="searchInput" type="text" placeholder="Company name or ticker — e.g. Apple, MSFT, Nvidia" autocomplete="off" />
+      <button id="searchBtn" type="button">Value it</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="dropdown" id="dropdown" hidden></div>
+    <div class="status-line" id="statusLine"></div>
+  </div>
+
+  <div id="results" hidden>
+    <div class="co-header">
+      <div>
+        <div class="name" id="coName">—</div>
+        <div class="meta" id="coMeta">—</div>
+      </div>
+      <div class="price">
+        <div class="v num" id="coPrice">—</div>
+        <div class="l" id="coPriceLabel">—</div>
+      </div>
+    </div>
+
+    <div class="warn-banner" id="negFcfWarning" hidden>
+      ⚠️ <strong id="negFcfWarningTitle"></strong>
+      <span id="negFcfWarningBody"></span>
+    </div>
+
+    <div class="card">
+      <h2>Verdict</h2>
+      <div class="analogy">🏈 The referee's call: is today's price past the fair-value marker, or short of it?</div>
+      <div class="verdict">
+        <div>
+          <div class="pill" id="verdictPill"></div>
+          <div class="figure num" id="fairValue">$0.00<span class="cur" id="vsPrice"></span></div>
+          <div class="sub" id="verdictSub"></div>
+        </div>
+        <div class="explain" id="explainText"></div>
+      </div>
+      <div class="football-caption" id="explainFootball"></div>
+    </div>
+
+    <div class="card" id="analystCard" hidden>
+      <h2>What Wall Street thinks</h2>
+      <div class="analogy">🏈 The scouting report — what the pros who watch this team every week are predicting for the season.</div>
+      <div class="verdict">
+        <div>
+          <div class="pill" id="analystPill"></div>
+          <div class="figure num" id="analystTarget">—</div>
+          <div class="sub" id="analystSub"></div>
+        </div>
+        <div class="explain" id="analystExplain"></div>
+      </div>
+      <div class="football-caption" id="analystFootball"></div>
+    </div>
+
+    <div class="card">
+      <h2>The football field — where today's price sits</h2>
+      <div class="chart-wrap" id="footballWrap"></div>
+      <div class="football-caption" id="footballCaption"></div>
+      <div class="sens-note">🏈 marks today's price. Flags mark the DCF estimate and the analyst target. The shaded strip is the full sensitivity range — a wide strip means the call is assumption-sensitive.</div>
+    </div>
+
+    <div class="card">
+      <h2>Unlevered free cash flow, historically</h2>
+      <div class="analogy">🏈 The box score — how much cash the team actually put up each season, no matter how it was financed.</div>
+      <div class="chart-wrap" id="historyChartWrap"></div>
+    </div>
+
+    <div class="card">
+      <h2>Assumptions — pulled automatically, drag to test your own</h2>
+      <div class="analogy">🏈 Your game plan: how fast the offense gains yards, how hard the defense discounts what hasn't happened yet, and how many plays you're calling before the clock runs out.</div>
+      <div class="assump-grid">
+        <div class="field">
+          <label>Unlevered FCF growth (years 1–5) <span class="val" id="growthVal">6.0%</span></label>
+          <input type="range" id="growthInput" min="-10" max="30" step="0.5" value="6" />
+          <span class="src" id="growthSrc">default estimate</span>
+          <span class="src">🏈 how fast the offense is gaining yards per season</span>
+        </div>
+        <div class="field">
+          <label>Terminal growth rate <span class="val" id="termVal">2.5%</span></label>
+          <input type="range" id="termInput" min="0" max="4.5" step="0.1" value="2.5" />
+          <span class="src">long-run economy growth, held conservative</span>
+          <span class="src">🏈 the pace once the game settles into overtime</span>
+        </div>
+        <div class="field">
+          <label>Discount rate (WACC) <span class="val" id="waccVal">9.0%</span></label>
+          <input type="range" id="waccInput" min="2" max="22" step="0.1" value="9" />
+          <span class="src" id="waccSrc">required annual return — raise it for riskier businesses</span>
+          <span class="src">🏈 a tougher defense (more risk) makes future yards count for less today</span>
+        </div>
+        <div class="field">
+          <label>Projection window <span class="val" id="yearsVal">5 yrs</span></label>
+          <input type="range" id="yearsInput" min="3" max="10" step="1" value="5" />
+          <span class="src">years of explicit forecast before the terminal value</span>
+          <span class="src">🏈 how many plays you're calling before assuming garbage time</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Where the value comes from</h2>
+      <div class="chart-wrap" id="chartWrap"></div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--accent)"></span>present value of forecast unlevered FCF</span>
+        <span><span class="sw" style="background:var(--info)"></span>present value of terminal value</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Sensitivity — fair value per share by assumption</h2>
+      <div class="sens-scroll"><table class="sens" id="sensTable"></table></div>
+      <div class="sens-note">Rows: discount rate. Columns: terminal growth. Shaded green where the model says the stock is worth more than today's price, red where it says less. 🏈 Same team, different coaching calls — each cell is a different game plan and its final score.</div>
+    </div>
+
+    <div class="card">
+      <h2>Quick multiples (context, not the verdict)</h2>
+      <div class="analogy">🏈 How this team's stats compare to the league average — context for the scoreboard, not the final call.</div>
+      <div class="comps-grid">
+        <div class="comp-tile">
+          <div class="lbl" id="fwdPeLbl">Forward P/E</div>
+          <div class="v num" id="fwdPeVal">—</div>
+          <div class="ref" id="fwdPeRef">vs. ~19–21× long-run forward market average</div>
+        </div>
+        <div class="comp-tile">
+          <div class="lbl">EV / EBITDA</div>
+          <div class="v num" id="evEbitdaVal">—</div>
+          <div class="ref" id="evEbitdaRef">vs. ~11–13× typical large-cap range</div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      Fundamentals from SEC EDGAR company filings (XBRL); live price and beta from Yahoo Finance; analyst
+      consensus, price targets and EPS estimates from Nasdaq's public data; the risk-free rate from FRED (10-year
+      Treasury). Cash flow is unlevered free cash flow to the firm (FCFF = EBIT × (1 − tax) + D&amp;A − CapEx − ΔNWC),
+      discounted at a WACC built from CAPM (regression beta × equity risk premium, blended with cost of debt).
+      This is a simplified model for learning purposes, not investment advice — always sanity-check the assumptions above.
+      <span id="asOfLine"></span>
+      <div style="margin-top:10px;">© <span id="copyrightYear"></span> Loic Fortin</div>
+    </footer>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const searchInput = $('searchInput');
+  const searchBtn = $('searchBtn');
+  const dropdown = $('dropdown');
+  const statusLine = $('statusLine');
+  const results = $('results');
+  const chips = $('chips');
+
+  // ---- theme toggle -------------------------------------------------
+  const themeBtn = $('themeToggle');
+  function applyTheme(mode) {
+    if (mode === 'system') { document.documentElement.removeAttribute('data-theme'); }
+    else { document.documentElement.setAttribute('data-theme', mode); }
+    themeBtn.textContent = 'Theme: ' + mode[0].toUpperCase() + mode.slice(1);
+    try { localStorage.setItem('fv-theme', mode); } catch (e) {}
+  }
+  let savedTheme = 'system';
+  try { savedTheme = localStorage.getItem('fv-theme') || 'system'; } catch (e) {}
+  applyTheme(savedTheme);
+  themeBtn.addEventListener('click', () => {
+    const order = ['system', 'light', 'dark'];
+    const next = order[(order.indexOf(savedTheme) + 1) % order.length];
+    savedTheme = next;
+    applyTheme(next);
+  });
+
+  // ---- quick-start chips ---------------------------------------------
+  const QUICKSTART = [
+    ['AAPL', 'Apple'], ['MSFT', 'Microsoft'], ['GOOGL', 'Alphabet'],
+    ['NVDA', 'NVIDIA'], ['TSLA', 'Tesla'], ['KO', 'Coca-Cola'],
+  ];
+  QUICKSTART.forEach(([t, n]) => {
+    const b = document.createElement('button');
+    b.className = 'chip'; b.type = 'button'; b.textContent = t;
+    b.title = n;
+    b.addEventListener('click', () => loadTicker(t));
+    chips.appendChild(b);
+  });
+
+  // ---- search dropdown -------------------------------------------------
+  let searchTimer = null;
+  let lastResults = [];
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = searchInput.value.trim();
+    if (!q) { dropdown.hidden = true; return; }
+    searchTimer = setTimeout(() => runSearch(q), 220);
+  });
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      if (lastResults.length) loadTicker(lastResults[0].ticker);
+      else if (searchInput.value.trim()) loadTicker(searchInput.value.trim());
+    }
+  });
+  searchBtn.addEventListener('click', () => {
+    if (lastResults.length) loadTicker(lastResults[0].ticker);
+    else if (searchInput.value.trim()) loadTicker(searchInput.value.trim());
+  });
+  document.addEventListener('click', (e) => {
+    if (!dropdown.contains(e.target) && e.target !== searchInput) dropdown.hidden = true;
+  });
+
+  async function runSearch(q) {
+    try {
+      const res = await fetch('/api/search?q=' + encodeURIComponent(q));
+      const data = await res.json();
+      lastResults = data.results || [];
+      renderDropdown(lastResults);
+    } catch (e) { /* silent — search is best-effort */ }
+  }
+
+  function renderDropdown(items) {
+    dropdown.innerHTML = '';
+    if (!items.length) { dropdown.hidden = true; return; }
+    items.forEach((r) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.innerHTML = '<span class="t">' + r.ticker + '</span><span class="n">' + escapeHtml(r.name) + '</span>';
+      b.addEventListener('click', () => loadTicker(r.ticker));
+      dropdown.appendChild(b);
+    });
+    dropdown.hidden = false;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---- load + compute -------------------------------------------------
+  let current = null; // holds fetched base data
+
+  async function loadTicker(ticker) {
+    dropdown.hidden = true;
+    searchInput.value = ticker;
+    statusLine.className = 'status-line';
+    statusLine.textContent = 'Pulling filings and price for ' + ticker + '…';
+    searchBtn.disabled = true;
+    results.hidden = true;
+    try {
+      const res = await fetch('/api/valuation?ticker=' + encodeURIComponent(ticker));
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Lookup failed');
+      if (!data.financials || data.financials.latestFcf === null || data.financials.latestFcf === undefined) {
+        throw new Error('SEC filings for ' + ticker + " didn't include usable cash-flow tags — try a different large-cap ticker.");
+      }
+      current = data;
+      statusLine.textContent = '';
+      populate(data);
+      results.hidden = false;
+    } catch (e) {
+      statusLine.className = 'status-line error';
+      statusLine.textContent = e.message;
+    } finally {
+      searchBtn.disabled = false;
+    }
+  }
+
+  function populate(data) {
+    const f = data.financials;
+    $('coName').textContent = data.company.name;
+    $('coMeta').textContent = data.company.ticker + (data.price ? ' · ' + data.price.exchange : '') + ' · CIK ' + data.company.cik;
+    if (data.price) {
+      $('coPrice').textContent = fmtMoney(data.price.price);
+      $('coPriceLabel').textContent = 'live price (' + data.price.currency + ')';
+    } else {
+      $('coPrice').textContent = '—';
+      $('coPriceLabel').textContent = 'price unavailable';
+    }
+
+    // seed assumption defaults
+    const growthDefault = f && data.estimatedGrowth && data.estimatedGrowth.fcfCagr != null
+      ? clamp(data.estimatedGrowth.fcfCagr * 100, -10, 25)
+      : 6;
+    $('growthInput').value = growthDefault.toFixed(1);
+    $('growthSrc').textContent = data.estimatedGrowth && data.estimatedGrowth.fcfCagr != null
+      ? 'from ' + f.fcfHistory.length + '-year historical unlevered FCF trend (SEC filings)'
+      : 'no reliable trend in filings — conservative default, please review';
+    $('termInput').value = 2.5;
+
+    const w = data.waccEstimate;
+    if (w) {
+      $('waccInput').value = (w.wacc * 100).toFixed(2);
+      $('waccSrc').innerHTML = 'CAPM: β ' + w.beta.toFixed(2) + ' (' + w.betaSource + ') · cost of equity ' + (w.costOfEquity * 100).toFixed(1) +
+        '% · cost of debt ' + (w.costOfDebt * 100).toFixed(1) + '% · ' + (w.weightEquity * 100).toFixed(0) + '/' + (w.weightDebt * 100).toFixed(0) + ' equity/debt mix';
+    } else {
+      $('waccInput').value = 9;
+      $('waccSrc').textContent = 'required annual return — raise it for riskier businesses';
+    }
+
+    $('yearsInput').value = 5;
+
+    ['growthInput', 'termInput', 'waccInput', 'yearsInput'].forEach((id) => {
+      $(id).oninput = recompute;
+    });
+
+    renderHistoryChart(f);
+    recompute();
+
+    $('asOfLine').textContent = ' Pulled ' + new Date(data.asOf).toLocaleString() + '.';
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+  function fmtMoney(v) { return '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function fmtBig(v) {
+    if (v === null || v === undefined) return '—';
+    const abs = Math.abs(v);
+    if (abs >= 1e12) return (v / 1e12).toFixed(2) + 'T';
+    if (abs >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+    if (abs >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    return v.toFixed(0);
+  }
+
+  function dcf(fcf0, growth, terminalGrowth, wacc, years, netDebt, shares) {
+    const flows = [];
+    let pvSum = 0;
+    for (let i = 1; i <= years; i++) {
+      const nominal = fcf0 * Math.pow(1 + growth, i);
+      const df = 1 / Math.pow(1 + wacc, i);
+      const pv = nominal * df;
+      flows.push({ year: i, nominal, pv });
+      pvSum += pv;
+    }
+    if (wacc <= terminalGrowth) return null;
+    const lastNominal = flows[flows.length - 1].nominal;
+    const terminalValue = (lastNominal * (1 + terminalGrowth)) / (wacc - terminalGrowth);
+    const pvTerminal = terminalValue / Math.pow(1 + wacc, years);
+    const enterpriseValue = pvSum + pvTerminal;
+    const equityValue = enterpriseValue - netDebt;
+    const perShare = equityValue / shares;
+    return { flows, pvSum, pvTerminal, enterpriseValue, equityValue, perShare };
+  }
+
+  function recompute() {
+    if (!current) return;
+    const f = current.financials;
+    const growth = parseFloat($('growthInput').value) / 100;
+    const term = parseFloat($('termInput').value) / 100;
+    const wacc = parseFloat($('waccInput').value) / 100;
+    const years = parseInt($('yearsInput').value, 10);
+
+    $('growthVal').textContent = (growth * 100).toFixed(1) + '%';
+    $('termVal').textContent = (term * 100).toFixed(1) + '%';
+    $('waccVal').textContent = (wacc * 100).toFixed(2) + '%';
+    $('yearsVal').textContent = years + ' yrs';
+
+    const shares = f.latestShares;
+    const netDebt = current.netDebt;
+    const result = dcf(f.latestFcf, growth, term, wacc, years, netDebt, shares);
+
+    const warnBanner = $('negFcfWarning');
+    if (f.latestFcf <= 0) {
+      warnBanner.hidden = false;
+      $('negFcfWarningTitle').textContent = 'This company’s most recent unlevered free cash flow (FCFF) was negative.';
+      $('negFcfWarningBody').textContent = ' A standard DCF assumes cash flow grows from a positive starting point, so it breaks down here — ' +
+        '"' + fmtBig(f.latestFcf) + '" grown at a positive rate just gets more negative, which is why the numbers below may look nonsensical. ' +
+        'Treat this one as informational only, or swap in a normalized/average FCF via the growth assumption.';
+    } else {
+      warnBanner.hidden = true;
+    }
+
+    if (!result) {
+      $('explainText').textContent = 'Discount rate must be higher than the terminal growth rate — adjust the sliders.';
+      $('fairValue').innerHTML = '—';
+      $('verdictPill').textContent = '';
+      $('verdictSub').textContent = '';
+      return;
+    }
+
+    const price = current.price ? current.price.price : null;
+    renderVerdict(result, price, f, growth, years);
+    renderChart(result);
+    const sensRange = renderSensitivity(f, netDebt, shares, growth, wacc, term, years, price);
+    renderComps(current, price);
+    renderAnalyst(current, price, result.perShare);
+    renderFootballField(result.perShare, sensRange, price, current.analyst);
+  }
+
+  function renderVerdict(result, price, f, growth, years) {
+    $('fairValue').innerHTML = fmtMoney(result.perShare) +
+      (price ? '<span class="cur num">vs ' + fmtMoney(price) + ' today</span>' : '');
+
+    const pill = $('verdictPill');
+    const sub = $('verdictSub');
+    if (price) {
+      const upside = (result.perShare - price) / price;
+      const pct = (upside * 100).toFixed(1);
+      let cls, label;
+      if (upside > 0.15) { cls = 'good'; label = 'Looks undervalued'; }
+      else if (upside < -0.15) { cls = 'critical'; label = 'Looks overvalued'; }
+      else { cls = 'warn'; label = 'Roughly fairly valued'; }
+      pill.className = 'pill ' + cls;
+      pill.textContent = label;
+      sub.textContent = (upside >= 0 ? 'Model implies ' + pct + '% upside' : 'Model implies ' + Math.abs(pct) + '% downside') + ' versus the current price.';
+
+      const dir = upside >= 0 ? 'above' : 'below';
+      const verdictWord = upside > 0.15 ? 'a good deal' : (upside < -0.15 ? 'overpaying' : 'close to fair value');
+      $('explainText').innerHTML =
+        'Discounting ' + current.company.ticker + '’s projected unlevered free cash flow (FCFF) back to today, at these assumptions, ' +
+        'suggests the business is worth about <strong>' + fmtMoney(result.perShare) + ' per share</strong>. ' +
+        'That’s ' + Math.abs(pct) + '% ' + dir + ' today’s price of ' + fmtMoney(price) + ', which reads as <strong>' + verdictWord + '</strong> — ' +
+        'assuming FCFF keeps growing around ' + (growth * 100).toFixed(1) + '%/yr for the next ' + years + ' years.';
+
+      const yards = Math.min(99, Math.round(Math.abs(upside) * 100));
+      let footballLine;
+      if (upside > 0.15) {
+        footballLine = '🏈 <strong>In football terms:</strong> the price is sitting about ' + yards + ' yards behind the fair-value marker — ' +
+          'like a wide-open receiver nobody’s thrown to yet. The model thinks there’s a lot of open field left to gain.';
+      } else if (upside < -0.15) {
+        footballLine = '🏈 <strong>In football terms:</strong> the price has already been pushed about ' + yards + ' yards past the fair-value marker — ' +
+          'you’d be paying for real estate down the field that, by this model’s read of the tape, the offense hasn’t actually earned yet.';
+      } else {
+        footballLine = '🏈 <strong>In football terms:</strong> the price is sitting right on the fair-value marker — call it a coin-flip down, no real edge either way.';
+      }
+      $('explainFootball').innerHTML = footballLine;
+    } else {
+      pill.className = 'pill warn';
+      pill.textContent = 'No live price';
+      sub.textContent = 'Could not fetch a current price to compare against.';
+      $('explainText').textContent = 'Estimated intrinsic value shown above; live price was unavailable to compare.';
+      $('explainFootball').textContent = '';
+    }
+  }
+
+  function renderChart(result) {
+    const wrap = $('chartWrap');
+    const W = 640, H = 220, padL = 54, padB = 26, padT = 10, padR = 10;
+    const bars = result.flows.map((f) => ({ label: 'Y' + f.year, val: f.pv, kind: 'accent' }));
+    bars.push({ label: 'TV', val: result.pvTerminal, kind: 'info' });
+    const max = Math.max(...bars.map((b) => b.val), 1);
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const bw = plotW / bars.length * 0.6;
+    const gap = plotW / bars.length;
+
+    const cssAccent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    const cssInfo = getComputedStyle(document.documentElement).getPropertyValue('--info').trim();
+    const cssMuted = getComputedStyle(document.documentElement).getPropertyValue('--ink-muted').trim();
+    const cssBorder = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+
+    let bars_svg = '';
+    let labels_svg = '';
+    bars.forEach((b, i) => {
+      const h = (b.val / max) * plotH;
+      const x = padL + i * gap + (gap - bw) / 2;
+      const y = padT + plotH - h;
+      const fill = b.kind === 'accent' ? cssAccent : cssInfo;
+      bars_svg += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(h,1).toFixed(1) + '" rx="3" fill="' + fill + '"></rect>';
+      labels_svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - padB + 16).toFixed(1) + '" text-anchor="middle" font-size="11" fill="' + cssMuted + '" font-family="IBM Plex Mono, monospace">' + b.label + '</text>';
+    });
+
+    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((t) => {
+      const y = padT + plotH * (1 - t);
+      const val = max * t;
+      return '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="' + cssBorder + '" stroke-width="1"></line>' +
+        '<text x="' + (padL - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="' + cssMuted + '" font-family="IBM Plex Mono, monospace">' + fmtBig(val) + '</text>';
+    }).join('');
+
+    wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Present value of forecast cash flows and terminal value by year">' +
+      gridLines + bars_svg + labels_svg + '</svg>';
+  }
+
+  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  function renderHistoryChart(fin) {
+    const wrap = $('historyChartWrap');
+    const points = fin.fcfHistory;
+    if (!points || points.length < 2) {
+      wrap.innerHTML = '<div class="skeleton">Not enough historical filings to chart a trend.</div>';
+      return;
+    }
+    const W = 640, H = 190, padL = 54, padR = 16, padT = 20, padB = 26;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const values = points.map((p) => p.fcf);
+    const min = Math.min(0, ...values);
+    const max = Math.max(...values, 1);
+    const range = (max - min) || 1;
+    const stepX = plotW / (points.length - 1);
+    const xAt = (i) => padL + i * stepX;
+    const yAt = (v) => padT + plotH - ((v - min) / range) * plotH;
+
+    const accent = cssVar('--accent'), muted = cssVar('--ink-muted'), border = cssVar('--border'), ink = cssVar('--ink');
+
+    const linePath = points.map((p, i) => (i === 0 ? 'M' : 'L') + xAt(i).toFixed(1) + ' ' + yAt(p.fcf).toFixed(1)).join(' ');
+    const baseY = yAt(min).toFixed(1);
+    const areaPath = linePath + ' L ' + xAt(points.length - 1).toFixed(1) + ' ' + baseY + ' L ' + xAt(0).toFixed(1) + ' ' + baseY + ' Z';
+
+    const gridLines = [0, 0.5, 1].map((t) => {
+      const val = min + range * t;
+      const y = yAt(val);
+      return '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="' + border + '" stroke-width="1"></line>' +
+        '<text x="' + (padL - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="' + muted + '" font-family="IBM Plex Mono, monospace">' + fmtBig(val) + '</text>';
+    }).join('');
+
+    const xLabels = points.map((p, i) => '<text x="' + xAt(i).toFixed(1) + '" y="' + (H - padB + 16) + '" text-anchor="middle" font-size="11" fill="' + muted + '" font-family="IBM Plex Mono, monospace">FY' + String(p.fy).slice(-2) + '</text>').join('');
+
+    const last = points[points.length - 1];
+    const lastX = xAt(points.length - 1), lastY = yAt(last.fcf);
+    const endpoint = '<circle cx="' + lastX.toFixed(1) + '" cy="' + lastY.toFixed(1) + '" r="4.5" fill="' + accent + '" stroke="' + cssVar('--surface') + '" stroke-width="2"></circle>' +
+      '<text x="' + (lastX - 8).toFixed(1) + '" y="' + (lastY - 12).toFixed(1) + '" text-anchor="end" font-size="12" font-weight="600" fill="' + ink + '" font-family="IBM Plex Mono, monospace">' + fmtBig(last.fcf) + '</text>';
+
+    wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Historical free cash flow by fiscal year">' +
+      '<defs><linearGradient id="fcfGrad" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="' + accent + '" stop-opacity="0.35"></stop>' +
+      '<stop offset="100%" stop-color="' + accent + '" stop-opacity="0"></stop></linearGradient></defs>' +
+      gridLines +
+      '<path d="' + areaPath + '" fill="url(#fcfGrad)"></path>' +
+      '<path d="' + linePath + '" fill="none" stroke="' + accent + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>' +
+      endpoint + xLabels +
+      '</svg>';
+  }
+
+  function renderFootballField(basePerShare, sensRange, price, analyst) {
+    const wrap = $('footballWrap');
+    const target = analyst && analyst.priceTarget;
+    const flags = [{ label: 'DCF fair value', val: basePerShare, kind: 'accent' }];
+    if (target) flags.push({ label: 'Analyst target', val: target, kind: 'info' });
+
+    const lo = sensRange && sensRange.min != null ? sensRange.min : basePerShare * 0.8;
+    const hi = sensRange && sensRange.max != null ? sensRange.max : basePerShare * 1.2;
+    const allVals = flags.map((m) => m.val).concat([lo, hi]).concat(price ? [price] : []);
+    const min = Math.min(...allVals), max = Math.max(...allVals);
+    const span = (max - min) || 1;
+    const padFrac = 0.12;
+    const scaleMin = min - span * padFrac, scaleMax = max + span * padFrac;
+    const scaleSpan = scaleMax - scaleMin || 1;
+
+    // layout: end zones bookend a striped "field" that holds the value scale
+    const W = 640, H = 190, ezW = 34, fieldL = 16, fieldR = W - 16;
+    const plotL = fieldL + ezW, plotR = fieldR - ezW, plotW = plotR - plotL;
+    const fieldTop = 96, fieldBottom = 138, fieldMidY = (fieldTop + fieldBottom) / 2;
+    const xAt = (v) => plotL + ((v - scaleMin) / scaleSpan) * plotW;
+
+    const accent = cssVar('--accent'), info = cssVar('--info'), ink = cssVar('--ink'), muted = cssVar('--ink-muted'), surface = cssVar('--surface');
+    const colorFor = { accent, info };
+    const turf = '#2e7d4f', turfDark = '#276b43', endzone = '#1e4a32', chalk = 'rgba(255,255,255,0.55)', chalkBright = 'rgba(255,255,255,0.9)';
+
+    // turf + end zones
+    let field = '<rect x="' + fieldL + '" y="' + fieldTop + '" width="' + (fieldR - fieldL) + '" height="' + (fieldBottom - fieldTop) + '" rx="6" fill="' + turf + '"></rect>';
+    field += '<rect x="' + fieldL + '" y="' + fieldTop + '" width="' + ezW + '" height="' + (fieldBottom - fieldTop) + '" fill="' + endzone + '"></rect>';
+    field += '<rect x="' + (fieldR - ezW) + '" y="' + fieldTop + '" width="' + ezW + '" height="' + (fieldBottom - fieldTop) + '" fill="' + endzone + '"></rect>';
+    // yard stripes (decorative) + midfield line
+    for (let k = 1; k < 8; k++) {
+      const x = plotL + (plotW / 8) * k;
+      const bright = k === 4;
+      field += '<line x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" y1="' + fieldTop + '" y2="' + fieldBottom + '" stroke="' + (bright ? chalkBright : chalk) + '" stroke-width="' + (bright ? 2 : 1) + '"></line>';
+    }
+    field += '<text x="' + (fieldL + ezW / 2) + '" y="' + (fieldMidY + 4) + '" text-anchor="middle" font-size="9" font-weight="700" fill="rgba(255,255,255,0.6)" letter-spacing="1">END</text>';
+    field += '<text x="' + (fieldR - ezW / 2) + '" y="' + (fieldMidY + 4) + '" text-anchor="middle" font-size="9" font-weight="700" fill="rgba(255,255,255,0.6)" letter-spacing="1">END</text>';
+
+    // sensitivity range as a translucent "zone marker" band across the turf
+    const rangeBand = (sensRange && sensRange.min != null)
+      ? '<rect x="' + xAt(lo).toFixed(1) + '" y="' + fieldTop + '" width="' + (xAt(hi) - xAt(lo)).toFixed(1) + '" height="' + (fieldBottom - fieldTop) + '" fill="rgba(255,255,255,0.16)"></rect>' +
+        '<text x="' + xAt(lo).toFixed(1) + '" y="' + (fieldBottom + 16) + '" text-anchor="middle" font-size="10" fill="' + muted + '" font-family=\'IBM Plex Mono, monospace\'>' + fmtMoney(lo) + '</text>' +
+        '<text x="' + xAt(hi).toFixed(1) + '" y="' + (fieldBottom + 16) + '" text-anchor="middle" font-size="10" fill="' + muted + '" font-family=\'IBM Plex Mono, monospace\'>' + fmtMoney(hi) + '</text>'
+      : '';
+
+    // the football: today's price, sitting on the field
+    let ball = '';
+    if (price) {
+      const px = clamp(xAt(price), plotL + 8, plotR - 8);
+      ball = '<text x="' + px.toFixed(1) + '" y="' + (fieldMidY + 7) + '" text-anchor="middle" font-size="22">🏈</text>' +
+        '<text x="' + px.toFixed(1) + '" y="' + (fieldBottom + 34) + '" text-anchor="middle" font-size="12" font-weight="700" fill="' + ink + '" font-family="IBM Plex Mono, monospace">' + fmtMoney(price) + '</text>' +
+        '<text x="' + px.toFixed(1) + '" y="' + (fieldBottom + 47) + '" text-anchor="middle" font-size="10" fill="' + muted + '">price today</text>';
+    }
+
+    // flags: DCF fair value + analyst target, planted above the field
+    const sortedFlags = flags.slice().sort((a, b) => a.val - b.val);
+    let lastX = -999, row = 0;
+    const flagRows = sortedFlags.map((m) => {
+      const x = clamp(xAt(m.val), plotL, plotR);
+      if (x - lastX < 100) row = row === 0 ? 1 : 0; else row = 0;
+      lastX = x;
+      return { ...m, x, row };
+    });
+    const flagSvg = flagRows.map((m) => {
+      const color = colorFor[m.kind];
+      const poleTop = m.row === 0 ? fieldTop - 26 : fieldTop - 46;
+      return '<line x1="' + m.x.toFixed(1) + '" x2="' + m.x.toFixed(1) + '" y1="' + poleTop + '" y2="' + fieldTop + '" stroke="' + color + '" stroke-width="2"></line>' +
+        '<path d="M ' + m.x.toFixed(1) + ' ' + poleTop + ' l 16 4 l -16 4 Z" fill="' + color + '"></path>' +
+        '<text x="' + m.x.toFixed(1) + '" y="' + (poleTop - 6) + '" text-anchor="middle" font-size="11" font-weight="600" fill="' + ink + '" font-family="IBM Plex Mono, monospace">' + fmtMoney(m.val) + '</text>' +
+        '<text x="' + m.x.toFixed(1) + '" y="' + (poleTop - 19) + '" text-anchor="middle" font-size="10" fill="' + muted + '">' + m.label + '</text>';
+    }).join('');
+
+    wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Football field chart: today\'s price versus the DCF fair value and analyst target">' +
+      field + rangeBand + flagSvg + ball + '</svg>';
+
+    // plain-English caption in football terms
+    const capEl = $('footballCaption');
+    if (price) {
+      const upside = (basePerShare - price) / price;
+      let text;
+      if (upside > 0.15) {
+        text = '🏈 <strong>Today’s price is well short of the fair-value line.</strong> On this model there’s real yardage left before the stock reaches what it’s worth.';
+      } else if (upside < -0.15) {
+        text = '🏈 <strong>The ball’s already past the fair-value line.</strong> You’d be paying for yardage this model doesn’t think is actually there.';
+      } else {
+        text = '🏈 <strong>Today’s price is sitting right around the fair-value line</strong> — no big edge either way on this model.';
+      }
+      capEl.innerHTML = text;
+    } else {
+      capEl.textContent = '';
+    }
+  }
+
+  function renderSensitivity(f, netDebt, shares, growth, wacc, term, years, price) {
+    const waccSteps = [-0.02, -0.01, 0, 0.01, 0.02].map((d) => wacc + d).filter((w) => w > 0);
+    const termSteps = [-0.01, -0.005, 0, 0.005, 0.01].map((d) => term + d).filter((t) => t >= 0);
+    let min = Infinity, max = -Infinity;
+
+    let html = '<thead><tr><th>WACC \\ g</th>' + termSteps.map((t) => '<th>' + (t * 100).toFixed(1) + '%</th>').join('') + '</tr></thead><tbody>';
+    waccSteps.forEach((w) => {
+      html += '<tr><th>' + (w * 100).toFixed(2) + '%</th>';
+      termSteps.forEach((t) => {
+        const r = dcf(f.latestFcf, growth, t, w, years, netDebt, shares);
+        if (!r) { html += '<td class="val">—</td>'; return; }
+        if (r.perShare < min) min = r.perShare;
+        if (r.perShare > max) max = r.perShare;
+        let bg = 'transparent';
+        if (price) {
+          const upside = (r.perShare - price) / price;
+          if (upside > 0.05) bg = 'var(--good-soft)';
+          else if (upside < -0.05) bg = 'var(--critical-soft)';
+          else bg = 'var(--warn-soft)';
+        }
+        html += '<td class="val" style="background:' + bg + '">' + fmtMoney(r.perShare) + '</td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody>';
+    $('sensTable').innerHTML = html;
+    return { min: Number.isFinite(min) ? min : null, max: Number.isFinite(max) ? max : null };
+  }
+
+  function renderComps(data, price) {
+    const f = data.financials;
+    const a = data.analyst;
+    const peEl = $('fwdPeVal'), peRefEl = $('fwdPeRef'), peLblEl = $('fwdPeLbl'), evEl = $('evEbitdaVal');
+
+    if (price && a && a.forwardEps) {
+      peLblEl.textContent = 'Forward P/E';
+      const fwdPe = a.forwardEps > 0 ? (price / a.forwardEps) : null;
+      peEl.textContent = fwdPe ? fwdPe.toFixed(1) + '×' : 'n/m (loss-making)';
+      let ref = 'vs. ~19–21× long-run forward market average';
+      if (price && f.latestNetIncome && f.latestShares) {
+        const trailingEps = f.latestNetIncome / f.latestShares;
+        if (trailingEps > 0) ref += ' · trailing ' + (price / trailingEps).toFixed(1) + '×';
+      }
+      if (a.forwardEpsFiscalEnd) ref += ' · FY' + a.forwardEpsFiscalEnd.replace(/\D/g, '');
+      peRefEl.textContent = ref;
+    } else if (price && f.latestNetIncome && f.latestShares) {
+      // no consensus forward estimate available — fall back to trailing, labeled honestly
+      peLblEl.textContent = 'Trailing P/E';
+      const eps = f.latestNetIncome / f.latestShares;
+      peEl.textContent = eps > 0 ? (price / eps).toFixed(1) + '×' : 'n/m (loss-making)';
+      peRefEl.textContent = 'no consensus forward estimate available';
+    } else {
+      peLblEl.textContent = 'Forward P/E';
+      peEl.textContent = '—';
+      peRefEl.textContent = 'vs. ~19–21× long-run forward market average';
+    }
+
+    if (price && f.latestShares && f.latestOpIncome != null && f.latestDA != null) {
+      const marketCap = price * f.latestShares;
+      const ev = marketCap + data.netDebt;
+      const ebitda = f.latestOpIncome + f.latestDA;
+      evEl.textContent = ebitda > 0 ? (ev / ebitda).toFixed(1) + '×' : 'n/m';
+    } else { evEl.textContent = '—'; }
+  }
+
+  function analystClass(rating) {
+    if (!rating) return 'warn';
+    const r = rating.toLowerCase();
+    if (r.includes('sell') || r.includes('underperform') || r.includes('underweight')) return 'critical';
+    if (r.includes('buy') || r.includes('outperform') || r.includes('overweight')) return 'good';
+    return 'warn';
+  }
+
+  function renderAnalyst(data, price, dcfPerShare) {
+    const card = $('analystCard');
+    const a = data.analyst;
+    if (!a || (a.priceTarget == null && a.meanRating == null)) { card.hidden = true; return; }
+    card.hidden = false;
+
+    const pill = $('analystPill');
+    pill.className = 'pill ' + analystClass(a.meanRating);
+    pill.textContent = a.meanRating ? 'Consensus: ' + a.meanRating : 'Rating unavailable';
+
+    const targetEl = $('analystTarget');
+    targetEl.innerHTML = a.priceTarget
+      ? fmtMoney(a.priceTarget) + (price ? '<span class="cur num">vs ' + fmtMoney(price) + ' today</span>' : '')
+      : '—';
+
+    const subEl = $('analystSub');
+    if (a.priceTarget && price) {
+      const upside = (a.priceTarget - price) / price;
+      subEl.textContent = '12-month average target implies ' + (upside >= 0 ? '+' : '−') + Math.abs(upside * 100).toFixed(1) + '% ' + (upside >= 0 ? 'upside' : 'downside') +
+        (a.analystCount ? ' · ' + a.analystCount + ' analysts' : '');
+    } else {
+      subEl.textContent = a.analystCount ? a.analystCount + ' analysts covering this stock' : 'No price target available';
+    }
+
+    let text = '';
+    if (a.meanRating) {
+      text += 'Wall Street’s consensus rating is <strong>' + a.meanRating + '</strong>' + (a.analystCount ? ' across ' + a.analystCount + ' analysts' : '') + '. ';
+    }
+    if (a.priceTarget && price) {
+      const analystUpside = (a.priceTarget - price) / price;
+      text += 'Their average 12-month price target of <strong>' + fmtMoney(a.priceTarget) + '</strong> implies about ' +
+        Math.abs(analystUpside * 100).toFixed(1) + '% ' + (analystUpside >= 0 ? 'upside' : 'downside') + ' from here. ';
+    }
+    if (a.priceTarget && dcfPerShare) {
+      const diff = (dcfPerShare - a.priceTarget) / a.priceTarget;
+      if (Math.abs(diff) < 0.1) text += 'That’s broadly in line with what this DCF model finds.';
+      else if (dcfPerShare < a.priceTarget) text += 'This DCF model is more conservative than the Street’s target — worth asking why.';
+      else text += 'This DCF model is actually more optimistic than the Street’s target.';
+    }
+    $('analystExplain').innerHTML = text || 'Limited analyst data available for this ticker.';
+
+    const cls = analystClass(a.meanRating);
+    let footballLine;
+    if (cls === 'good') footballLine = '🏈 <strong>In football terms:</strong> the scouts like the tape on this team — their reports lean toward more yards ahead, not fewer.';
+    else if (cls === 'critical') footballLine = '🏈 <strong>In football terms:</strong> the scouts are red-flagging this one — the film doesn’t back up the price as much as you’d like.';
+    else footballLine = '🏈 <strong>In football terms:</strong> the scouts are calling it an even down — no strong lean either way.';
+    $('analystFootball').innerHTML = footballLine;
+  }
+
+  // load a default example on first paint so the tool isn't an empty shell
+  $('copyrightYear').textContent = new Date().getFullYear();
+  loadTicker('AAPL');
+})();
+</script>
+</body>
+</html>
