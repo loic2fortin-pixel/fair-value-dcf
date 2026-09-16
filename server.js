@@ -108,27 +108,46 @@ async function fetchTextWithRetry(url, headers, attempts = 2) {
 // SEC XBRL extraction
 // ---------------------------------------------------------------------------
 
+// Three traps in SEC's companyfacts API, all handled here:
+//
+// 1. Companies switch XBRL tags mid-history (NVIDIA moved off
+//    RevenueFromContractWithCustomerExcludingAssessedTax onto plain Revenues around FY2023),
+//    so picking only the first tag that has *any* data strands you on a stale series. Fix:
+//    merge every tag variant together instead of stopping at the first match.
+//
+// 2. A 10-K's XBRL includes quarterly comparatives alongside the annual total, all stamped
+//    with the *filing's* fy/fp/form/filed metadata regardless of the fact's own duration. Fix:
+//    drop duration facts spanning under 300 days; instant facts (no "start") pass through.
+//
+// 3. Worse, a 10-K's multi-year comparative income statement tags two or three different
+//    fiscal years' full-year figures with that SAME filing-level 'fy' label (e.g. one NVIDIA
+//    10-K tags its own year, plus the prior two years' totals, all as fy:2026). Deduping by
+//    that label silently collapses distinct years into one, keeping whichever happened to be
+//    inserted first. Fix: key by the fact's own period-end date instead of SEC's fy label -
+//    that uniquely identifies the real period no matter how the filing tags it.
 function annualPointsFor(facts, taxonomy, tags) {
+  const byEnd = new Map();
   for (const tag of tags) {
     const node = facts[taxonomy] && facts[taxonomy][tag];
     const units = node && node.units && (node.units.USD || node.units.shares || node.units['USD/shares']);
     if (!units) continue;
-    const byFy = new Map();
     for (const entry of units) {
       if (entry.fp !== 'FY') continue;
-      if (!entry.fy || entry.val === undefined || entry.val === null) continue;
-      // an FY can appear in multiple filings (10-K, 10-K/A); keep the most recently filed
-      const existing = byFy.get(entry.fy);
+      if (entry.val === undefined || entry.val === null || !entry.end) continue;
+      if (entry.form !== '10-K' && entry.form !== '10-K/A') continue;
+      if (entry.start) {
+        const days = (new Date(entry.end) - new Date(entry.start)) / 86400000;
+        if (days < 300) continue; // a quarterly/partial-period fact riding along on the annual filing
+      }
+      const existing = byEnd.get(entry.end);
       if (!existing || (entry.filed && entry.filed > existing.filed)) {
-        byFy.set(entry.fy, entry);
+        byEnd.set(entry.end, entry);
       }
     }
-    const points = Array.from(byFy.values())
-      .filter((e) => e.form === '10-K' || e.form === '10-K/A')
-      .sort((a, b) => a.fy - b.fy);
-    if (points.length) return points.map((p) => ({ fy: p.fy, val: p.val, end: p.end }));
   }
-  return [];
+  return Array.from(byEnd.values())
+    .sort((a, b) => new Date(a.end) - new Date(b.end))
+    .map((p) => ({ fy: parseInt(p.end.slice(0, 4), 10), val: p.val, end: p.end }));
 }
 
 function latestVal(points) {
@@ -193,40 +212,29 @@ function extractFinancials(companyFacts) {
     'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments',
   ]);
   const taxExpense = annualPointsFor(facts, 'us-gaap', ['IncomeTaxExpenseBenefit']);
-  const currentAssets = annualPointsFor(facts, 'us-gaap', ['AssetsCurrent']);
-  const currentLiabilities = annualPointsFor(facts, 'us-gaap', ['LiabilitiesCurrent']);
   const interestExpense = annualPointsFor(facts, 'us-gaap', [
     'InterestExpense', 'InterestExpenseDebt', 'InterestAndDebtExpense',
   ]);
 
   const taxRate = effectiveTaxRate(pretaxIncome, taxExpense);
 
-  // Net working capital = (current assets excl. cash) - (current liabilities excl. short-term debt),
-  // matched year over year to get the change (deltaNWC) that unlevered FCF subtracts.
-  const caByFy = seriesByFy(currentAssets);
-  const clByFy = seriesByFy(currentLiabilities);
-  const cashByFy = seriesByFy(cash);
-  const shortDebtByFy = seriesByFy(shortDebt);
-  const nwcByFy = new Map();
-  for (const [fy, ca] of caByFy) {
-    if (!clByFy.has(fy)) continue;
-    const nwc = (ca - (cashByFy.get(fy) || 0)) - (clByFy.get(fy) - (shortDebtByFy.get(fy) || 0));
-    nwcByFy.set(fy, nwc);
-  }
-
   // Unlevered free cash flow to the firm (FCFF): the standard DCF input.
-  // FCFF = EBIT x (1 - tax) + D&A - CapEx - deltaNWC
-  const opByFy = seriesByFy(opIncome);
-  const daByFy = seriesByFy(da);
+  // Textbook has two equivalent routes to it - EBIT(1-t) + D&A - CapEx - deltaNWC, or
+  // CFO + Interest(1-t) - CapEx (CFO already nets out D&A add-backs and working-capital
+  // moves internally). The CFO route is used here because operating cash flow and CapEx
+  // are tagged near-universally in SEC filings, while EBIT/D&A/current-asset tags vary
+  // enough by filer (NVIDIA, Alphabet, etc.) that requiring all of them left some large
+  // caps with no usable history at all. Interest expense defaults to 0 for a given year
+  // if untagged, which is a reasonable read for low-debt companies and just collapses to
+  // the familiar OCF - CapEx.
+  const ocfByFy = seriesByFy(ocf);
   const capexByFy = seriesByFy(capex);
+  const interestByFy = seriesByFy(interestExpense);
   const fcffHistory = [];
-  for (const [fy, ebit] of opByFy) {
-    if (!daByFy.has(fy) || !capexByFy.has(fy)) continue;
-    const nwcNow = nwcByFy.get(fy);
-    const nwcPrev = nwcByFy.get(fy - 1);
-    const deltaNwc = (nwcNow != null && nwcPrev != null) ? (nwcNow - nwcPrev) : 0;
-    const nopat = ebit * (1 - taxRate);
-    const fcff = nopat + daByFy.get(fy) - Math.abs(capexByFy.get(fy)) - deltaNwc;
+  for (const [fy, cfo] of ocfByFy) {
+    if (!capexByFy.has(fy)) continue;
+    const interestAddBack = (interestByFy.get(fy) || 0) * (1 - taxRate);
+    const fcff = cfo + interestAddBack - Math.abs(capexByFy.get(fy));
     fcffHistory.push({ fy, fcf: fcff });
   }
   fcffHistory.sort((a, b) => a.fy - b.fy);
@@ -342,8 +350,16 @@ async function fetchRiskFreeRate() {
 
 // WACC = weight_equity x CostOfEquity + weight_debt x CostOfDebt x (1 - tax)
 // CostOfEquity via CAPM = riskFree + beta x equityRiskPremium
+//
+// The raw 2-year regression beta is noisy, especially for volatile single names (a memory
+// chipmaker can regress to a beta north of 2.5 depending on which two years you sample).
+// Standard practitioner correction is the Blume adjustment - published by Bloomberg and
+// Value Line for exactly this reason - which shrinks the raw beta a third of the way toward
+// the market average of 1.0: adjusted = raw x 2/3 + 1.0 x 1/3. It reflects the empirical
+// finding that betas mean-revert over time, not a thumb on the scale to move the answer.
 function computeWacc({ beta, riskFreeRate, costOfDebtRaw, taxRate, marketCap, totalDebt }) {
-  const effectiveBeta = beta != null ? Math.min(3, Math.max(0.2, beta)) : 1;
+  const rawBeta = beta != null ? Math.min(3, Math.max(0.2, beta)) : 1;
+  const effectiveBeta = rawBeta * (2 / 3) + 1.0 * (1 / 3);
   const costOfEquity = riskFreeRate + effectiveBeta * EQUITY_RISK_PREMIUM;
   const E = marketCap || 0, D = totalDebt || 0;
   const total = E + D || 1;
@@ -353,7 +369,8 @@ function computeWacc({ beta, riskFreeRate, costOfDebtRaw, taxRate, marketCap, to
   return {
     wacc: Math.min(0.22, Math.max(0.03, wacc)),
     beta: effectiveBeta,
-    betaSource: beta != null ? 'regression' : 'default (insufficient price history)',
+    rawBeta,
+    betaSource: beta != null ? 'regression, Blume-adjusted' : 'default (insufficient price history)',
     costOfEquity, costOfDebt, weightEquity, weightDebt, riskFreeRate, equityRiskPremium: EQUITY_RISK_PREMIUM,
   };
 }
@@ -383,11 +400,14 @@ async function fetchAnalystSentiment(ticker) {
   const out = {
     priceTarget: null, meanRating: null, analystCount: null,
     forwardEps: null, forwardEpsFiscalEnd: null, forwardEpsCount: null,
+    sector: null, industry: null,
   };
 
   if (summary.status === 'fulfilled') {
     const sd = summary.value && summary.value.data && summary.value.data.summaryData;
     out.priceTarget = sd && parseMoneyString(sd.OneYrTarget && sd.OneYrTarget.value);
+    out.sector = sd && sd.Sector && sd.Sector.value || null;
+    out.industry = sd && sd.Industry && sd.Industry.value || null;
   }
 
   if (ratings.status === 'fulfilled') {
@@ -411,6 +431,27 @@ async function fetchAnalystSentiment(ticker) {
 
   if (out.priceTarget === null && out.meanRating === null && out.forwardEps === null) return null;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Business description (Wikipedia's public summary API - free, no key)
+// ---------------------------------------------------------------------------
+
+const WIKI_HEADERS = { 'User-Agent': 'Fair-Value-DCF-Tool/1.0 (educational project)' };
+
+async function fetchBusinessSummary(companyName) {
+  try {
+    const searchUrl = 'https://en.wikipedia.org/w/api.php?action=opensearch&limit=1&namespace=0&format=json&search=' + encodeURIComponent(companyName);
+    const searchResult = await fetchWithRetry(searchUrl, WIKI_HEADERS, 2);
+    const title = searchResult && searchResult[1] && searchResult[1][0];
+    if (!title) return null;
+    const summaryUrl = 'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title);
+    const summary = await fetchWithRetry(summaryUrl, WIKI_HEADERS, 2);
+    if (!summary || !summary.extract || summary.type === 'disambiguation') return null;
+    return { extract: summary.extract, title: summary.title, wikiUrl: summary.content_urls && summary.content_urls.desktop && summary.content_urls.desktop.page };
+  } catch (e) {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -440,16 +481,18 @@ async function handleValuation(req, res, query) {
     return sendJson(res, 502, { error: `Could not fetch SEC financial data for ${tickerQ}: ${e.message}` });
   }
 
-  const [priceResult, analystResult, betaResult, riskFreeResult] = await Promise.allSettled([
+  const [priceResult, analystResult, betaResult, riskFreeResult, businessResult] = await Promise.allSettled([
     fetchPrice(tickerQ),
     fetchAnalystSentiment(tickerQ),
     fetchBeta(tickerQ),
     fetchRiskFreeRate(),
+    fetchBusinessSummary(match.name),
   ]);
   const priceInfo = priceResult.status === 'fulfilled' ? priceResult.value : null;
   const analyst = analystResult.status === 'fulfilled' ? analystResult.value : null;
   const beta = betaResult.status === 'fulfilled' ? betaResult.value : null;
   const riskFreeRate = riskFreeResult.status === 'fulfilled' ? riskFreeResult.value : 0.042;
+  const business = businessResult.status === 'fulfilled' ? businessResult.value : null;
 
   const fin = extractFinancials(companyFacts);
   const fcfGrowth = cagr(fin.fcfHistory, 'fcf');
@@ -468,6 +511,7 @@ async function handleValuation(req, res, query) {
     company: { ticker: match.ticker, name: match.name, cik: match.cik },
     price: priceInfo,
     analyst,
+    business,
     financials: fin,
     estimatedGrowth: {
       fcfCagr: fcfGrowth,

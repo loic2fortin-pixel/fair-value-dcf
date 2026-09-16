@@ -145,6 +145,7 @@
   .warn-banner { background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn); border-radius: 8px; padding: 12px 16px; font-size: 13.5px; line-height: 1.5; }
   .warn-banner strong { display: block; margin-bottom: 2px; font-size: 13.5px; }
   .warn-banner span { color: var(--ink); }
+  .warn-banner.info { background: var(--info-soft); color: var(--info); border-color: var(--info); }
 
   .card {
     position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -216,6 +217,25 @@
   .comp-tile .v { font-family: "IBM Plex Mono", monospace; font-size: 22px; font-weight: 700; color: var(--ink); }
   .comp-tile .ref { font-size: 11.5px; color: var(--ink-faint); margin-top: 4px; }
 
+  /* Business description */
+  .business-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .business-meta span {
+    background: var(--surface-2); color: var(--ink-muted); border: 1px solid var(--border); border-radius: 5px;
+    padding: 4px 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .business-extract { font-size: 14.5px; line-height: 1.6; }
+
+  /* Player scouting card */
+  .player-card { display: flex; gap: 20px; align-items: center; }
+  @media (max-width: 480px) { .player-card { flex-direction: column; align-items: flex-start; } }
+  .player-art { flex: none; width: 110px; }
+  .player-art svg { width: 100%; height: auto; display: block; }
+  .player-position { font-family: "Anton", sans-serif; font-weight: 400; font-size: 24px; text-transform: uppercase; letter-spacing: 0.01em; margin-bottom: 6px; }
+  .player-why { font-size: 14.5px; line-height: 1.6; color: var(--ink); }
+  .player-why strong { color: var(--accent); }
+  .player-comp { display: block; margin-top: 8px; font-size: 13px; color: var(--ink-muted); }
+  .player-comp strong { color: var(--ink); }
+
   footer { margin-top: 28px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
   footer a { color: var(--ink-muted); }
 
@@ -256,9 +276,29 @@
       </div>
     </div>
 
+    <div class="card" id="playerCompCard" hidden>
+      <h2>Final scouting report</h2>
+      <div class="analogy">🏈 Rolling growth, risk, valuation and cash-flow track record into one read: if this company were an NFL player, who would it be?</div>
+      <div class="player-card">
+        <div class="player-art" id="playerArt"></div>
+        <div class="player-info">
+          <div class="player-position" id="playerPosition"></div>
+          <div class="player-why" id="playerWhy"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="warn-banner" id="negFcfWarning" hidden>
-      ⚠️ <strong id="negFcfWarningTitle"></strong>
+      <span id="negFcfWarningIcon">⚠️</span> <strong id="negFcfWarningTitle"></strong>
       <span id="negFcfWarningBody"></span>
+    </div>
+
+    <div class="card" id="businessCard" hidden>
+      <h2>What this team actually does</h2>
+      <div class="analogy">🏈 The playbook — where the money comes from before we talk about what it's worth.</div>
+      <div class="business-meta" id="businessTags"></div>
+      <div class="business-extract" id="businessExtract"></div>
+      <div class="sens-note" id="businessSource"></div>
     </div>
 
     <div class="card">
@@ -273,6 +313,37 @@
         <div class="explain" id="explainText"></div>
       </div>
       <div class="football-caption" id="explainFootball"></div>
+    </div>
+
+    <div class="card">
+      <h2>Assumptions — pulled automatically, drag to test your own</h2>
+      <div class="analogy">🏈 Your game plan: how fast the offense gains yards, how hard the defense discounts what hasn't happened yet, and how many plays you're calling before the clock runs out.</div>
+      <div class="assump-grid">
+        <div class="field">
+          <label>Unlevered FCF growth (year 1, fading to terminal) <span class="val" id="growthVal">6.0%</span></label>
+          <input type="range" id="growthInput" min="-10" max="30" step="0.5" value="6" />
+          <span class="src" id="growthSrc">default estimate</span>
+          <span class="src">🏈 how fast the offense is gaining yards per season</span>
+        </div>
+        <div class="field">
+          <label>Terminal growth rate <span class="val" id="termVal">2.5%</span></label>
+          <input type="range" id="termInput" min="0" max="4.5" step="0.1" value="2.5" />
+          <span class="src">long-run economy growth, held conservative</span>
+          <span class="src">🏈 the pace once the game settles into overtime</span>
+        </div>
+        <div class="field">
+          <label>Discount rate (WACC) <span class="val" id="waccVal">9.0%</span></label>
+          <input type="range" id="waccInput" min="2" max="22" step="0.1" value="9" />
+          <span class="src" id="waccSrc">required annual return — raise it for riskier businesses</span>
+          <span class="src">🏈 a tougher defense (more risk) makes future yards count for less today</span>
+        </div>
+        <div class="field">
+          <label>Projection window <span class="val" id="yearsVal">5 yrs</span></label>
+          <input type="range" id="yearsInput" min="3" max="10" step="1" value="5" />
+          <span class="src">years of explicit forecast before the terminal value</span>
+          <span class="src">🏈 how many plays you're calling before assuming garbage time</span>
+        </div>
+      </div>
     </div>
 
     <div class="card" id="analystCard" hidden>
@@ -303,46 +374,6 @@
     </div>
 
     <div class="card">
-      <h2>Assumptions — pulled automatically, drag to test your own</h2>
-      <div class="analogy">🏈 Your game plan: how fast the offense gains yards, how hard the defense discounts what hasn't happened yet, and how many plays you're calling before the clock runs out.</div>
-      <div class="assump-grid">
-        <div class="field">
-          <label>Unlevered FCF growth (years 1–5) <span class="val" id="growthVal">6.0%</span></label>
-          <input type="range" id="growthInput" min="-10" max="30" step="0.5" value="6" />
-          <span class="src" id="growthSrc">default estimate</span>
-          <span class="src">🏈 how fast the offense is gaining yards per season</span>
-        </div>
-        <div class="field">
-          <label>Terminal growth rate <span class="val" id="termVal">2.5%</span></label>
-          <input type="range" id="termInput" min="0" max="4.5" step="0.1" value="2.5" />
-          <span class="src">long-run economy growth, held conservative</span>
-          <span class="src">🏈 the pace once the game settles into overtime</span>
-        </div>
-        <div class="field">
-          <label>Discount rate (WACC) <span class="val" id="waccVal">9.0%</span></label>
-          <input type="range" id="waccInput" min="2" max="22" step="0.1" value="9" />
-          <span class="src" id="waccSrc">required annual return — raise it for riskier businesses</span>
-          <span class="src">🏈 a tougher defense (more risk) makes future yards count for less today</span>
-        </div>
-        <div class="field">
-          <label>Projection window <span class="val" id="yearsVal">5 yrs</span></label>
-          <input type="range" id="yearsInput" min="3" max="10" step="1" value="5" />
-          <span class="src">years of explicit forecast before the terminal value</span>
-          <span class="src">🏈 how many plays you're calling before assuming garbage time</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>Where the value comes from</h2>
-      <div class="chart-wrap" id="chartWrap"></div>
-      <div class="legend">
-        <span><span class="sw" style="background:var(--accent)"></span>present value of forecast unlevered FCF</span>
-        <span><span class="sw" style="background:var(--info)"></span>present value of terminal value</span>
-      </div>
-    </div>
-
-    <div class="card">
       <h2>Sensitivity — fair value per share by assumption</h2>
       <div class="sens-scroll"><table class="sens" id="sensTable"></table></div>
       <div class="sens-note">Rows: discount rate. Columns: terminal growth. Shaded green where the model says the stock is worth more than today's price, red where it says less. 🏈 Same team, different coaching calls — each cell is a different game plan and its final score.</div>
@@ -367,10 +398,12 @@
 
     <footer>
       Fundamentals from SEC EDGAR company filings (XBRL); live price and beta from Yahoo Finance; analyst
-      consensus, price targets and EPS estimates from Nasdaq's public data; the risk-free rate from FRED (10-year
-      Treasury). Cash flow is unlevered free cash flow to the firm (FCFF = EBIT × (1 − tax) + D&amp;A − CapEx − ΔNWC),
-      discounted at a WACC built from CAPM (regression beta × equity risk premium, blended with cost of debt).
-      This is a simplified model for learning purposes, not investment advice — always sanity-check the assumptions above.
+      consensus, price targets and EPS estimates, and sector/industry, from Nasdaq's public data; company
+      description from Wikipedia; the risk-free rate from FRED (10-year Treasury). Cash flow is unlevered free
+      cash flow to the firm (FCFF = operating cash flow + after-tax interest expense − CapEx), discounted with
+      mid-year convention at a WACC built from CAPM (regression beta × equity risk premium, blended with cost of
+      debt). This is a simplified model for learning purposes, not investment advice — always sanity-check the
+      assumptions above.
       <span id="asOfLine"></span>
       <div style="margin-top:10px;">© <span id="copyrightYear"></span> Loic Fortin</div>
     </footer>
@@ -522,7 +555,7 @@
     const w = data.waccEstimate;
     if (w) {
       $('waccInput').value = (w.wacc * 100).toFixed(2);
-      $('waccSrc').innerHTML = 'CAPM: β ' + w.beta.toFixed(2) + ' (' + w.betaSource + ') · cost of equity ' + (w.costOfEquity * 100).toFixed(1) +
+      $('waccSrc').innerHTML = 'CAPM: raw β ' + w.rawBeta.toFixed(2) + ' → ' + w.beta.toFixed(2) + ' (' + w.betaSource + ') · cost of equity ' + (w.costOfEquity * 100).toFixed(1) +
         '% · cost of debt ' + (w.costOfDebt * 100).toFixed(1) + '% · ' + (w.weightEquity * 100).toFixed(0) + '/' + (w.weightDebt * 100).toFixed(0) + ' equity/debt mix';
     } else {
       $('waccInput').value = 9;
@@ -536,9 +569,25 @@
     });
 
     renderHistoryChart(f);
+    renderBusinessCard(data);
     recompute();
 
     $('asOfLine').textContent = ' Pulled ' + new Date(data.asOf).toLocaleString() + '.';
+  }
+
+  function renderBusinessCard(data) {
+    const card = $('businessCard');
+    const biz = data.business;
+    const a = data.analyst;
+    const tags = [];
+    if (a && a.sector) tags.push(a.sector);
+    if (a && a.industry) tags.push(a.industry);
+    if (!biz && !tags.length) { card.hidden = true; return; }
+    card.hidden = false;
+
+    $('businessTags').innerHTML = tags.map((t) => '<span>' + escapeHtml(t) + '</span>').join('');
+    $('businessExtract').textContent = biz ? biz.extract : 'No summary available for this company.';
+    $('businessSource').textContent = biz && biz.wikiUrl ? 'Summary from Wikipedia (' + biz.title + ').' : '';
   }
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -552,20 +601,40 @@
     return v.toFixed(0);
   }
 
+  // Mid-year convention: cash arrives through the year, not in one lump at year-end,
+  // so each period is discounted from its midpoint (t - 0.5) rather than its end (t).
+  // Standard practice in banking-grade DCFs; it raises PVs by roughly wacc/2 vs. the naive version.
+  //
+  // Growth fade: full growth holds for most of the explicit window, then tapers to the
+  // terminal rate over the final couple of years, rather than a hard cliff from the input
+  // rate straight down to the terminal rate in the last year. Standard 2-stage-DCF practice -
+  // a business's growth decelerates as it scales, it doesn't hold constant for five years and
+  // then instantly downshift to GDP growth on day one of year six.
   function dcf(fcf0, growth, terminalGrowth, wacc, years, netDebt, shares) {
     const flows = [];
     let pvSum = 0;
+    let prev = fcf0;
+    const fadeYears = Math.min(2, years - 1);
+    const flatYears = years - fadeYears;
     for (let i = 1; i <= years; i++) {
-      const nominal = fcf0 * Math.pow(1 + growth, i);
-      const df = 1 / Math.pow(1 + wacc, i);
+      let yearGrowth;
+      if (i <= flatYears || fadeYears <= 0) {
+        yearGrowth = growth;
+      } else {
+        const t = (i - flatYears) / fadeYears;
+        yearGrowth = growth + (terminalGrowth - growth) * t;
+      }
+      const nominal = prev * (1 + yearGrowth);
+      const df = 1 / Math.pow(1 + wacc, i - 0.5);
       const pv = nominal * df;
-      flows.push({ year: i, nominal, pv });
+      flows.push({ year: i, nominal, pv, growth: yearGrowth });
       pvSum += pv;
+      prev = nominal;
     }
     if (wacc <= terminalGrowth) return null;
     const lastNominal = flows[flows.length - 1].nominal;
     const terminalValue = (lastNominal * (1 + terminalGrowth)) / (wacc - terminalGrowth);
-    const pvTerminal = terminalValue / Math.pow(1 + wacc, years);
+    const pvTerminal = terminalValue / Math.pow(1 + wacc, years - 0.5);
     const enterpriseValue = pvSum + pvTerminal;
     const equityValue = enterpriseValue - netDebt;
     const perShare = equityValue / shares;
@@ -587,15 +656,40 @@
 
     const shares = f.latestShares;
     const netDebt = current.netDebt;
-    const result = dcf(f.latestFcf, growth, term, wacc, years, netDebt, shares);
+
+    // Cyclical or one-off-hit businesses can post a negative FCFF in a single year even
+    // though the underlying business is fine across a cycle (chipmakers in a downturn,
+    // for example). Standard practice is to normalize on a multi-year average instead of
+    // projecting off a trough (or peak) year. Fall back to that average when the latest
+    // year is negative but the trailing average is not; only flag it as truly unmodelable
+    // when both are negative.
+    const histVals = f.fcfHistory.map((p) => p.fcf);
+    const avgFcf = histVals.length ? histVals.reduce((a, b) => a + b, 0) / histVals.length : null;
+    let baseFcf = f.latestFcf, fcfBasis = 'latest';
+    if (f.latestFcf <= 0 && avgFcf != null && avgFcf > 0) {
+      baseFcf = avgFcf;
+      fcfBasis = 'normalized';
+    } else if (f.latestFcf <= 0) {
+      fcfBasis = 'negative';
+    }
+
+    const result = dcf(baseFcf, growth, term, wacc, years, netDebt, shares);
 
     const warnBanner = $('negFcfWarning');
-    if (f.latestFcf <= 0) {
+    if (fcfBasis === 'negative') {
       warnBanner.hidden = false;
-      $('negFcfWarningTitle').textContent = 'This company’s most recent unlevered free cash flow (FCFF) was negative.';
-      $('negFcfWarningBody').textContent = ' A standard DCF assumes cash flow grows from a positive starting point, so it breaks down here — ' +
-        '"' + fmtBig(f.latestFcf) + '" grown at a positive rate just gets more negative, which is why the numbers below may look nonsensical. ' +
-        'Treat this one as informational only, or swap in a normalized/average FCF via the growth assumption.';
+      warnBanner.className = 'warn-banner';
+      $('negFcfWarningTitle').textContent = 'This company’s unlevered free cash flow (FCFF) has been negative on average.';
+      $('negFcfWarningBody').textContent = ' Both the latest year (' + fmtBig(f.latestFcf) + ') and the ' + histVals.length + '-year average (' + fmtBig(avgFcf) + ') are negative, ' +
+        'so a growth-based DCF genuinely doesn’t apply here — there’s no positive base to compound. Treat any number below as informational only; ' +
+        'a pre-revenue or structurally unprofitable business needs a different approach (e.g. a revenue-multiple or scenario-based valuation).';
+    } else if (fcfBasis === 'normalized') {
+      warnBanner.hidden = false;
+      warnBanner.className = 'warn-banner info';
+      $('negFcfWarningTitle').textContent = 'Latest-year FCFF was negative, likely a cyclical dip — using a normalized average instead.';
+      $('negFcfWarningBody').textContent = ' The most recent year came in at ' + fmtBig(f.latestFcf) + ', but the ' + histVals.length + '-year average is ' + fmtBig(avgFcf) + '. ' +
+        'This model uses that average as the starting point and grows from there — standard practice for cyclical businesses (semiconductors, commodities, airlines) rather than ' +
+        'projecting off a single trough year.';
     } else {
       warnBanner.hidden = true;
     }
@@ -609,15 +703,15 @@
     }
 
     const price = current.price ? current.price.price : null;
-    renderVerdict(result, price, f, growth, years);
-    renderChart(result);
-    const sensRange = renderSensitivity(f, netDebt, shares, growth, wacc, term, years, price);
+    renderVerdict(result, price, f, growth, term, years);
+    const sensRange = renderSensitivity(baseFcf, netDebt, shares, growth, wacc, term, years, price);
     renderComps(current, price);
     renderAnalyst(current, price, result.perShare);
     renderFootballField(result.perShare, sensRange, price, current.analyst);
+    if (price) renderPlayerCard(growth, price, result.perShare, fcfBasis);
   }
 
-  function renderVerdict(result, price, f, growth, years) {
+  function renderVerdict(result, price, f, growth, term, years) {
     $('fairValue').innerHTML = fmtMoney(result.perShare) +
       (price ? '<span class="cur num">vs ' + fmtMoney(price) + ' today</span>' : '');
 
@@ -640,7 +734,7 @@
         'Discounting ' + current.company.ticker + '’s projected unlevered free cash flow (FCFF) back to today, at these assumptions, ' +
         'suggests the business is worth about <strong>' + fmtMoney(result.perShare) + ' per share</strong>. ' +
         'That’s ' + Math.abs(pct) + '% ' + dir + ' today’s price of ' + fmtMoney(price) + ', which reads as <strong>' + verdictWord + '</strong> — ' +
-        'assuming FCFF keeps growing around ' + (growth * 100).toFixed(1) + '%/yr for the next ' + years + ' years.';
+        'assuming FCFF growth starts around ' + (growth * 100).toFixed(1) + '%/yr and fades toward ' + (term * 100).toFixed(1) + '% by year ' + years + '.';
 
       const yards = Math.min(99, Math.round(Math.abs(upside) * 100));
       let footballLine;
@@ -661,43 +755,6 @@
       $('explainText').textContent = 'Estimated intrinsic value shown above; live price was unavailable to compare.';
       $('explainFootball').textContent = '';
     }
-  }
-
-  function renderChart(result) {
-    const wrap = $('chartWrap');
-    const W = 640, H = 220, padL = 54, padB = 26, padT = 10, padR = 10;
-    const bars = result.flows.map((f) => ({ label: 'Y' + f.year, val: f.pv, kind: 'accent' }));
-    bars.push({ label: 'TV', val: result.pvTerminal, kind: 'info' });
-    const max = Math.max(...bars.map((b) => b.val), 1);
-    const plotW = W - padL - padR, plotH = H - padT - padB;
-    const bw = plotW / bars.length * 0.6;
-    const gap = plotW / bars.length;
-
-    const cssAccent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
-    const cssInfo = getComputedStyle(document.documentElement).getPropertyValue('--info').trim();
-    const cssMuted = getComputedStyle(document.documentElement).getPropertyValue('--ink-muted').trim();
-    const cssBorder = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
-
-    let bars_svg = '';
-    let labels_svg = '';
-    bars.forEach((b, i) => {
-      const h = (b.val / max) * plotH;
-      const x = padL + i * gap + (gap - bw) / 2;
-      const y = padT + plotH - h;
-      const fill = b.kind === 'accent' ? cssAccent : cssInfo;
-      bars_svg += '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(h,1).toFixed(1) + '" rx="3" fill="' + fill + '"></rect>';
-      labels_svg += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - padB + 16).toFixed(1) + '" text-anchor="middle" font-size="11" fill="' + cssMuted + '" font-family="IBM Plex Mono, monospace">' + b.label + '</text>';
-    });
-
-    const gridLines = [0, 0.25, 0.5, 0.75, 1].map((t) => {
-      const y = padT + plotH * (1 - t);
-      const val = max * t;
-      return '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="' + cssBorder + '" stroke-width="1"></line>' +
-        '<text x="' + (padL - 8) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="10" fill="' + cssMuted + '" font-family="IBM Plex Mono, monospace">' + fmtBig(val) + '</text>';
-    }).join('');
-
-    wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Present value of forecast cash flows and terminal value by year">' +
-      gridLines + bars_svg + labels_svg + '</svg>';
   }
 
   function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
@@ -843,7 +900,7 @@
     }
   }
 
-  function renderSensitivity(f, netDebt, shares, growth, wacc, term, years, price) {
+  function renderSensitivity(baseFcf, netDebt, shares, growth, wacc, term, years, price) {
     const waccSteps = [-0.02, -0.01, 0, 0.01, 0.02].map((d) => wacc + d).filter((w) => w > 0);
     const termSteps = [-0.01, -0.005, 0, 0.005, 0.01].map((d) => term + d).filter((t) => t >= 0);
     let min = Infinity, max = -Infinity;
@@ -852,7 +909,7 @@
     waccSteps.forEach((w) => {
       html += '<tr><th>' + (w * 100).toFixed(2) + '%</th>';
       termSteps.forEach((t) => {
-        const r = dcf(f.latestFcf, growth, t, w, years, netDebt, shares);
+        const r = dcf(baseFcf, growth, t, w, years, netDebt, shares);
         if (!r) { html += '<td class="val">—</td>'; return; }
         if (r.perShare < min) min = r.perShare;
         if (r.perShare > max) max = r.perShare;
@@ -965,9 +1022,81 @@
     $('analystFootball').innerHTML = footballLine;
   }
 
-  // load a default example on first paint so the tool isn't an empty shell
+  // ---- final scouting report: company as an NFL player archetype -----
+  // An original illustration, not a real photo (no licensing rights to NFL/player images on
+  // a public site). Real player NAMES are used as the "comp" for the flattering/neutral
+  // archetypes (a routine sports-commentary trope). The two archetypes that read as
+  // negative - declining production, unproven - deliberately carry no specific real name,
+  // so no identifiable person is tied to automated "overpaying/bust" commentary about a stock.
+  const PLAYER_ARCHETYPES = {
+    qb: { position: 'The Franchise Quarterback', color: '--accent', number: 12, comp: 'Patrick Mahomes' },
+    wr: { position: 'The Boom-or-Bust Deep Threat', color: '--critical', number: 80, comp: 'Tyreek Hill' },
+    rb: { position: 'The Workhorse Running Back', color: '--good', number: 22, comp: 'Derrick Henry' },
+    cb: { position: 'The Shutdown Cornerback', color: '--info', number: 24, comp: 'Patrick Surtain II' },
+    vet: { position: 'The Aging Veteran, Expensive Contract', color: '--warn', number: 7, comp: null },
+    rookie: { position: 'The Practice-Squad Prospect', color: '--ink-faint', number: 0, comp: null },
+  };
+
+  function classifyPlayer(growth, beta, upside, fcfBasis) {
+    if (fcfBasis === 'negative' || fcfBasis === 'normalized') return 'rookie';
+    if (growth >= 0.15 && beta <= 1.15 && upside >= -0.05) return 'qb';
+    if (growth >= 0.15) return 'wr';
+    if (upside <= -0.15) return 'vet';
+    if (beta <= 0.9 && upside >= 0) return 'cb';
+    return 'rb';
+  }
+
+  function renderPlayerArt(colorVar, number) {
+    const color = cssVar(colorVar);
+    return '<svg viewBox="0 0 120 150" role="img" aria-label="Stylized jersey card">' +
+      '<circle cx="60" cy="26" r="20" fill="' + cssVar('--surface-2') + '" stroke="' + cssVar('--border') + '" stroke-width="2"></circle>' +
+      '<rect x="44" y="8" width="32" height="9" rx="4" fill="' + color + '"></rect>' +
+      '<path d="M22 146 L22 62 Q22 46 40 46 L80 46 Q98 46 98 62 L98 146 Z" fill="' + color + '"></path>' +
+      '<path d="M22 62 L2 82 L16 98 L32 78 Z" fill="' + color + '"></path>' +
+      '<path d="M98 62 L118 82 L104 98 L88 78 Z" fill="' + color + '"></path>' +
+      '<text x="60" y="114" text-anchor="middle" font-family="Anton, sans-serif" font-size="50" fill="#ffffff" stroke="rgba(0,0,0,0.35)" stroke-width="1.5" paint-order="stroke">' + number + '</text>' +
+      '</svg>';
+  }
+
+  function renderPlayerCard(growth, price, fairValue, fcfBasis) {
+    const card = $('playerCompCard');
+    const w = current.waccEstimate;
+    if (!w) { card.hidden = true; return; }
+    const beta = w.beta;
+    const upside = (fairValue - price) / price;
+    const key = classifyPlayer(growth, beta, upside, fcfBasis);
+    const archetype = PLAYER_ARCHETYPES[key];
+    card.hidden = false;
+
+    $('playerArt').innerHTML = renderPlayerArt(archetype.color, archetype.number);
+    $('playerPosition').textContent = archetype.position;
+
+    const ticker = current.company.ticker;
+    const gPct = (growth * 100).toFixed(1);
+    const bStr = beta.toFixed(2);
+    const uPct = Math.abs(upside * 100).toFixed(1);
+    let why;
+    if (key === 'qb') {
+      why = ticker + ' is putting up <strong>' + gPct + '%/yr</strong> FCFF growth with a market-average risk profile (β ' + bStr + '), and the price isn’t stretched — the complete package: real production without excessive risk. That’s a franchise quarterback’s résumé.';
+    } else if (key === 'wr') {
+      why = ticker + ' is putting up big numbers — <strong>' + gPct + '%/yr</strong> FCFF growth — but with a beta of ' + bStr + ', the ride is volatile. Explosive upside, but a cold quarter can lose the game just as fast. Boom-or-bust, every drive.';
+    } else if (key === 'rb') {
+      why = ticker + ' isn’t flashy — ' + gPct + '%/yr growth, beta ' + bStr + ' — but it just keeps gaining yards, series after series. No drama, steady production: the kind of player a team is built around.';
+    } else if (key === 'cb') {
+      why = ticker + ' plays it safe: a low beta (' + bStr + '), and the model doesn’t think you’re overpaying at today’s price. No single stat jumps off the page — it just reliably doesn’t let you down.';
+    } else if (key === 'vet') {
+      why = ticker + '’s growth has slowed to ' + gPct + '%/yr, and at today’s price the model sees about <strong>' + uPct + '% downside</strong> — you’re paying premium-contract money for production that’s past its peak burst.';
+    } else {
+      why = ticker + '’s cash flow hasn’t turned reliably positive yet — like a prospect who hasn’t proven he can produce at this level. Could turn into a star, could wash out. Too early to hand out a starting job.';
+    }
+    if (archetype.comp) {
+      why += ' <span class="player-comp">Closest real-world comp: <strong>' + archetype.comp + '</strong>.</span>';
+    }
+    $('playerWhy').innerHTML = why;
+  }
+
   $('copyrightYear').textContent = new Date().getFullYear();
-  loadTicker('AAPL');
+  statusLine.textContent = 'Search a company above, or tap a quick-start chip to kick off.';
 })();
 </script>
 </body>
