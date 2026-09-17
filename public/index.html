@@ -403,8 +403,10 @@
 
     <footer>
       Fundamentals from SEC EDGAR company filings (XBRL); live price and beta from Yahoo Finance; analyst
-      consensus, price targets and EPS estimates, and sector/industry, from Nasdaq's public data; company
-      description from Wikipedia; the risk-free rate from FRED (10-year Treasury). Cash flow is unlevered free
+      consensus, price targets, EPS estimates, long-term growth consensus, and sector/industry, from Nasdaq's
+      public data; company description from Wikipedia; the risk-free rate from FRED (10-year Treasury). The growth
+      assumption defaults to Wall Street's own long-term earnings growth consensus when available, falling back to
+      a historical filings-based trend otherwise. Cash flow is unlevered free
       cash flow to the firm (FCFF = operating cash flow + after-tax interest expense − CapEx), discounted with
       mid-year convention at a WACC built from CAPM (regression beta × equity risk premium, blended with cost of
       debt). This is a simplified model for learning purposes, not investment advice — always sanity-check the
@@ -552,9 +554,17 @@
     current.fcfBasisInfo = fcfBasisInfo;
 
     let growthDefault, growthSrcText;
+    const ltg = data.analyst && data.analyst.longTermGrowth;
     const fcfG = data.estimatedGrowth && data.estimatedGrowth.fcfCagr;
     const revG = data.estimatedGrowth && data.estimatedGrowth.revenueCagr;
-    if (fcfBasisInfo.fcfBasis === 'normalized' && revG != null) {
+    if (ltg != null) {
+      // Real, forward-looking Wall Street consensus for 5-year earnings growth beats any
+      // trend extracted from historical filings, which by definition can't see next year's
+      // product cycle, guidance, or anything else analysts are actually pricing in. This is
+      // the single biggest accuracy upgrade available - use it whenever it's on offer.
+      growthDefault = clamp(ltg * 100, -10, 28);
+      growthSrcText = 'Wall Street consensus long-term (5yr) earnings growth estimate — the most forward-looking signal available';
+    } else if (fcfBasisInfo.fcfBasis === 'normalized' && revG != null) {
       // The FCF trend itself is contaminated by the same anomalous year that triggered
       // normalization (a one-off cash payment distorts both the level AND the trend line
       // through it) - revenue growth is a steadier proxy for the underlying business here.

@@ -400,16 +400,18 @@ function parseMoneyString(s) {
 }
 
 async function fetchAnalystSentiment(ticker) {
-  const [summary, ratings, forecast] = await Promise.allSettled([
+  const [summary, ratings, forecast, growth] = await Promise.allSettled([
     fetchWithRetry(`https://api.nasdaq.com/api/quote/${encodeURIComponent(ticker)}/summary?assetclass=stocks`, NASDAQ_HEADERS, 2),
     fetchWithRetry(`https://api.nasdaq.com/api/analyst/${encodeURIComponent(ticker)}/ratings`, NASDAQ_HEADERS, 2),
     fetchWithRetry(`https://api.nasdaq.com/api/analyst/${encodeURIComponent(ticker)}/earnings-forecast`, NASDAQ_HEADERS, 2),
+    fetchWithRetry(`https://api.nasdaq.com/api/company/${encodeURIComponent(ticker)}/earnings-growth`, NASDAQ_HEADERS, 2),
   ]);
 
   const out = {
     priceTarget: null, meanRating: null, analystCount: null,
     forwardEps: null, forwardEpsFiscalEnd: null, forwardEpsCount: null,
     sector: null, industry: null,
+    longTermGrowth: null,
   };
 
   if (summary.status === 'fulfilled') {
@@ -438,7 +440,16 @@ async function fetchAnalystSentiment(ticker) {
     }
   }
 
-  if (out.priceTarget === null && out.meanRating === null && out.forwardEps === null) return null;
+  if (growth.status === 'fulfilled') {
+    const chart = growth.value && growth.value.data && growth.value.data.chart;
+    const ltg = chart && chart.find((row) => row.x === 'Long Term 5 yr');
+    if (ltg && typeof ltg.y === 'string') {
+      const n = parseFloat(ltg.y);
+      if (Number.isFinite(n)) out.longTermGrowth = n / 100;
+    }
+  }
+
+  if (out.priceTarget === null && out.meanRating === null && out.forwardEps === null && out.longTermGrowth === null) return null;
   return out;
 }
 
