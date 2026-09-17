@@ -230,11 +230,15 @@
   @media (max-width: 480px) { .player-card { flex-direction: column; align-items: flex-start; } }
   .player-art { flex: none; width: 110px; }
   .player-art svg { width: 100%; height: auto; display: block; }
-  .player-position { font-family: "Anton", sans-serif; font-weight: 400; font-size: 24px; text-transform: uppercase; letter-spacing: 0.01em; margin-bottom: 6px; }
+  .player-headline { font-family: "Anton", sans-serif; font-weight: 400; font-size: 30px; text-transform: uppercase; letter-spacing: 0.01em; color: var(--accent); line-height: 1.05; }
+  .player-headline[hidden] { display: none; }
+  .player-position {
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-muted);
+    margin: 4px 0 10px;
+  }
+  .player-headline + .player-position { margin-top: 2px; }
   .player-why { font-size: 14.5px; line-height: 1.6; color: var(--ink); }
   .player-why strong { color: var(--accent); }
-  .player-comp { display: block; margin-top: 8px; font-size: 13px; color: var(--ink-muted); }
-  .player-comp strong { color: var(--ink); }
 
   footer { margin-top: 28px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
   footer a { color: var(--ink-muted); }
@@ -282,6 +286,7 @@
       <div class="player-card">
         <div class="player-art" id="playerArt"></div>
         <div class="player-info">
+          <div class="player-headline" id="playerHeadline"></div>
           <div class="player-position" id="playerPosition"></div>
           <div class="player-why" id="playerWhy"></div>
         </div>
@@ -328,7 +333,7 @@
         <div class="field">
           <label>Terminal growth rate <span class="val" id="termVal">2.5%</span></label>
           <input type="range" id="termInput" min="0" max="4.5" step="0.1" value="2.5" />
-          <span class="src">long-run economy growth, held conservative</span>
+          <span class="src" id="termSrc">long-run economy growth, held conservative</span>
           <span class="src">🏈 the pace once the game settles into overtime</span>
         </div>
         <div class="field">
@@ -547,14 +552,23 @@
     current.fcfBasisInfo = fcfBasisInfo;
 
     let growthDefault, growthSrcText;
-    if (fcfBasisInfo.fcfBasis === 'normalized' && data.estimatedGrowth && data.estimatedGrowth.revenueCagr != null) {
+    const fcfG = data.estimatedGrowth && data.estimatedGrowth.fcfCagr;
+    const revG = data.estimatedGrowth && data.estimatedGrowth.revenueCagr;
+    if (fcfBasisInfo.fcfBasis === 'normalized' && revG != null) {
       // The FCF trend itself is contaminated by the same anomalous year that triggered
       // normalization (a one-off cash payment distorts both the level AND the trend line
       // through it) - revenue growth is a steadier proxy for the underlying business here.
-      growthDefault = clamp(data.estimatedGrowth.revenueCagr * 100, -10, 25);
+      growthDefault = clamp(revG * 100, -10, 25);
       growthSrcText = 'FCF trend looks distorted by the same outlier year — using ' + f.revenueHistory.length + '-year revenue growth instead (SEC filings)';
-    } else if (f && data.estimatedGrowth && data.estimatedGrowth.fcfCagr != null) {
-      growthDefault = clamp(data.estimatedGrowth.fcfCagr * 100, -10, 25);
+    } else if (fcfG != null && revG != null && revG > fcfG + 0.05) {
+      // Revenue growing meaningfully faster than FCF usually means margins are being
+      // compressed by a heavy investment cycle (AI/datacenter CapEx is the live example) -
+      // a pure FCF trend then understates real business momentum. Blend the two rather than
+      // trusting a cash-flow trend that a capex cycle can distort just as much as a one-off.
+      growthDefault = clamp(((fcfG + revG) / 2) * 100, -10, 25);
+      growthSrcText = 'FCF growth (' + (fcfG * 100).toFixed(1) + '%) trails revenue growth (' + (revG * 100).toFixed(1) + '%) — likely a heavy investment cycle compressing margins, so blending the two';
+    } else if (fcfG != null) {
+      growthDefault = clamp(fcfG * 100, -10, 25);
       growthSrcText = 'from ' + f.fcfHistory.length + '-year historical unlevered FCF trend (SEC filings)';
     } else {
       growthDefault = 6;
@@ -562,7 +576,10 @@
     }
     $('growthInput').value = growthDefault.toFixed(1);
     $('growthSrc').textContent = growthSrcText;
-    $('termInput').value = 2.5;
+
+    const termForSector = sectorTerminalGrowth(data.analyst && data.analyst.sector);
+    $('termInput').value = termForSector.value.toFixed(1);
+    $('termSrc').textContent = termForSector.note;
 
     const w = data.waccEstimate;
     if (w) {
@@ -603,6 +620,47 @@
   }
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // Terminal growth shouldn't be one flat number for every business - a durable-moat
+  // software company plausibly keeps outgrowing GDP for decades; a utility or a staples
+  // business is structurally capped near it. This is a coarse, sector-level prior (not a
+  // precise model), fully overridable via the slider.
+  const SECTOR_TERMINAL_GROWTH = {
+    'Technology': [3.0, 'higher long-run ceiling — durable-moat software/platform economics'],
+    'Health Care': [3.0, 'higher long-run ceiling — aging demographics, pricing power'],
+    'Healthcare': [3.0, 'higher long-run ceiling — aging demographics, pricing power'],
+    'Consumer Discretionary': [2.5, 'roughly nominal GDP growth'],
+    'Consumer Staples': [2.0, 'mature, low-growth category — capped below GDP'],
+    'Utilities': [1.5, 'regulated, capital-intensive, structurally slow-growth'],
+    'Energy': [2.0, 'cyclical, commodity-priced — capped near GDP'],
+    'Financials': [2.5, 'roughly nominal GDP growth'],
+    'Industrials': [2.5, 'roughly nominal GDP growth'],
+    'Real Estate': [2.0, 'rent growth tends to track inflation, not much more'],
+    'Communication Services': [2.5, 'roughly nominal GDP growth'],
+    'Materials': [2.0, 'cyclical, commodity-exposed — capped near GDP'],
+  };
+  function sectorTerminalGrowth(sector) {
+    const hit = sector && SECTOR_TERMINAL_GROWTH[sector];
+    if (hit) return { value: hit[0], note: hit[1] + ' (' + sector + ')' };
+    return { value: 2.5, note: 'long-run economy growth, held conservative' };
+  }
+
+  // Several real, recognizable names per archetype instead of one repeated name - which one
+  // a given company gets is picked deterministically from its ticker, so it's stable across
+  // reloads but varies company to company instead of every "franchise QB" being Tom Brady.
+  const PLAYER_COMP_POOLS = {
+    qb: ['Tom Brady', 'Patrick Mahomes', 'Peyton Manning', 'Joe Montana'],
+    wr: ['Tyreek Hill', 'Stefon Diggs', 'DeSean Jackson', 'Odell Beckham Jr.'],
+    rb: ['Derrick Henry', 'Adrian Peterson', 'Marshawn Lynch', 'Frank Gore'],
+    cb: ['Patrick Surtain II', 'Jalen Ramsey', 'Richard Sherman', 'Darrelle Revis'],
+  };
+  function pickComp(key, ticker) {
+    const pool = PLAYER_COMP_POOLS[key];
+    if (!pool) return null;
+    let hash = 0;
+    for (let i = 0; i < ticker.length; i++) hash = (hash * 31 + ticker.charCodeAt(i)) >>> 0;
+    return pool[hash % pool.length];
+  }
   function fmtMoney(v) { return '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function fmtBig(v) {
     if (v === null || v === undefined) return '—';
@@ -1050,13 +1108,13 @@
   // negative - declining production, unproven - deliberately carry no specific real name,
   // so no identifiable person is tied to automated "overpaying/bust" commentary about a stock.
   const PLAYER_ARCHETYPES = {
-    qb: { position: 'The Franchise Quarterback', color: '--accent', number: 12, comp: 'Patrick Mahomes' },
-    wr: { position: 'The Boom-or-Bust Deep Threat', color: '--critical', number: 80, comp: 'Tyreek Hill' },
-    rb: { position: 'The Workhorse Running Back', color: '--good', number: 22, comp: 'Derrick Henry' },
-    cb: { position: 'The Shutdown Cornerback', color: '--info', number: 24, comp: 'Patrick Surtain II' },
-    vet: { position: 'The Aging Veteran, Expensive Contract', color: '--warn', number: 7, comp: null },
-    rookie: { position: 'The Practice-Squad Prospect', color: '--ink-faint', number: 0, comp: null },
-    comeback: { position: 'Coming Off an Injury Year', color: '--info', number: 44, comp: null },
+    qb: { position: 'The Franchise Quarterback', color: '--accent', number: 12 },
+    wr: { position: 'The Boom-or-Bust Deep Threat', color: '--critical', number: 80 },
+    rb: { position: 'The Workhorse Running Back', color: '--good', number: 22 },
+    cb: { position: 'The Shutdown Cornerback', color: '--info', number: 24 },
+    vet: { position: 'The Aging Veteran, Expensive Contract', color: '--warn', number: 7 },
+    rookie: { position: 'The Practice-Squad Prospect', color: '--ink-faint', number: 0 },
+    comeback: { position: 'Coming Off an Injury Year', color: '--info', number: 44 },
   };
 
   function classifyPlayer(growth, beta, upside, fcfBasis) {
@@ -1091,10 +1149,18 @@
     const archetype = PLAYER_ARCHETYPES[key];
     card.hidden = false;
 
-    $('playerArt').innerHTML = renderPlayerArt(archetype.color, archetype.number);
-    $('playerPosition').textContent = archetype.position;
-
     const ticker = current.company.ticker;
+    const comp = pickComp(key, ticker);
+
+    $('playerArt').innerHTML = renderPlayerArt(archetype.color, archetype.number);
+    const headlineEl = $('playerHeadline');
+    if (comp) {
+      headlineEl.textContent = 'Plays like: ' + comp;
+      headlineEl.hidden = false;
+    } else {
+      headlineEl.hidden = true;
+    }
+    $('playerPosition').textContent = archetype.position;
     const gPct = (growth * 100).toFixed(1);
     const bStr = beta.toFixed(2);
     const uPct = Math.abs(upside * 100).toFixed(1);
@@ -1113,9 +1179,6 @@
       why = ticker + '’s most recent season was a real dip, but the track record before it says this isn’t who they are — more like a proven starter coming back from an off year than a player who lost it. The model gives them credit for the career average, not just the last box score.';
     } else {
       why = ticker + '’s cash flow hasn’t turned reliably positive yet — like a prospect who hasn’t proven he can produce at this level. Could turn into a star, could wash out. Too early to hand out a starting job.';
-    }
-    if (archetype.comp) {
-      why += ' <span class="player-comp">Closest real-world comp: <strong>' + archetype.comp + '</strong>.</span>';
     }
     $('playerWhy').innerHTML = why;
   }

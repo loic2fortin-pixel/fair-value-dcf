@@ -448,11 +448,45 @@ async function fetchAnalystSentiment(ticker) {
 
 const WIKI_HEADERS = { 'User-Agent': 'Fair-Value-DCF-Tool/1.0 (educational project)' };
 
+// SEC filer names are things like "MICROSOFT CORP" or "ALPHABET INC" - searching that
+// literally sends Wikipedia's relevance ranking off toward tangential pages (a "Microsoft
+// Corp. v. European Commission" lawsuit once outranked the actual company page). The fix
+// isn't to strip the corporate suffix, though - stripping "Inc" off "Alphabet Inc." turns
+// the query into the bare word "Alphabet", which resolves to the Wikipedia article about
+// writing systems instead of the company. So: try the name properly title-cased with its
+// suffix intact first (closest match to the real page title), and only fall back to a
+// stripped version if that attempt comes up empty. Either way, skip anything that reads
+// like a court case.
+function titleCase(name) {
+  return name.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function cleanCompanyName(name) {
+  return name
+    .replace(/[.,]/g, '')
+    .replace(/\b(CORP(ORATION)?|INC|CO|COMPANY|LTD|LLC|PLC|LP|HOLDINGS?)\b\.?$/i, '')
+    .trim();
+}
+
+function looksLikeLitigation(title) {
+  return /\bv\.?\s|\bversus\b/i.test(title);
+}
+
+async function wikiSearchTitle(query) {
+  const searchUrl = 'https://en.wikipedia.org/w/api.php?action=opensearch&limit=5&namespace=0&format=json&search=' + encodeURIComponent(query);
+  const searchResult = await fetchWithRetry(searchUrl, WIKI_HEADERS, 2);
+  const candidates = (searchResult && searchResult[1]) || [];
+  return candidates.find((t) => !looksLikeLitigation(t)) || candidates[0] || null;
+}
+
 async function fetchBusinessSummary(companyName) {
   try {
-    const searchUrl = 'https://en.wikipedia.org/w/api.php?action=opensearch&limit=1&namespace=0&format=json&search=' + encodeURIComponent(companyName);
-    const searchResult = await fetchWithRetry(searchUrl, WIKI_HEADERS, 2);
-    const title = searchResult && searchResult[1] && searchResult[1][0];
+    const primary = titleCase(companyName.replace(/[.,]/g, ''));
+    let title = await wikiSearchTitle(primary);
+    if (!title) {
+      const cleaned = cleanCompanyName(companyName);
+      if (cleaned) title = await wikiSearchTitle(cleaned);
+    }
     if (!title) return null;
     const summaryUrl = 'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title);
     const summary = await fetchWithRetry(summaryUrl, WIKI_HEADERS, 2);
