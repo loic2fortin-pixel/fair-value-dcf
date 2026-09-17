@@ -263,17 +263,26 @@ function extractFinancials(companyFacts) {
   };
 }
 
+// Log-linear regression across every available year, not just the first and last -
+// a naive endpoint-to-endpoint CAGR is entirely at the mercy of whichever single year
+// happens to sit at each end (a one-off tax payment or divestiture gain in just one year
+// can swing it wildly). Fitting a trend line through all the points is far less sensitive
+// to any one anomalous year.
 function cagr(points, valueKey) {
   const usable = points.filter((p) => (valueKey ? p[valueKey] : p.val) > 0);
   if (usable.length < 2) return null;
-  const first = usable[0];
-  const last = usable[usable.length - 1];
-  const years = last.fy - first.fy;
-  if (years <= 0) return null;
-  const firstVal = valueKey ? first[valueKey] : first.val;
-  const lastVal = valueKey ? last[valueKey] : last.val;
-  if (firstVal <= 0 || lastVal <= 0) return null;
-  return Math.pow(lastVal / firstVal, 1 / years) - 1;
+  const xs = usable.map((p) => p.fy);
+  const ys = usable.map((p) => Math.log(valueKey ? p[valueKey] : p.val));
+  const n = xs.length;
+  const meanX = xs.reduce((a, b) => a + b, 0) / n;
+  const meanY = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (xs[i] - meanX) * (ys[i] - meanY);
+    den += (xs[i] - meanX) ** 2;
+  }
+  if (den === 0) return null;
+  return Math.exp(num / den) - 1;
 }
 
 // ---------------------------------------------------------------------------

@@ -543,13 +543,25 @@
     }
 
     // seed assumption defaults
-    const growthDefault = f && data.estimatedGrowth && data.estimatedGrowth.fcfCagr != null
-      ? clamp(data.estimatedGrowth.fcfCagr * 100, -10, 25)
-      : 6;
+    const fcfBasisInfo = computeFcfBasis(f);
+    current.fcfBasisInfo = fcfBasisInfo;
+
+    let growthDefault, growthSrcText;
+    if (fcfBasisInfo.fcfBasis === 'normalized' && data.estimatedGrowth && data.estimatedGrowth.revenueCagr != null) {
+      // The FCF trend itself is contaminated by the same anomalous year that triggered
+      // normalization (a one-off cash payment distorts both the level AND the trend line
+      // through it) - revenue growth is a steadier proxy for the underlying business here.
+      growthDefault = clamp(data.estimatedGrowth.revenueCagr * 100, -10, 25);
+      growthSrcText = 'FCF trend looks distorted by the same outlier year — using ' + f.revenueHistory.length + '-year revenue growth instead (SEC filings)';
+    } else if (f && data.estimatedGrowth && data.estimatedGrowth.fcfCagr != null) {
+      growthDefault = clamp(data.estimatedGrowth.fcfCagr * 100, -10, 25);
+      growthSrcText = 'from ' + f.fcfHistory.length + '-year historical unlevered FCF trend (SEC filings)';
+    } else {
+      growthDefault = 6;
+      growthSrcText = 'no reliable trend in filings — conservative default, please review';
+    }
     $('growthInput').value = growthDefault.toFixed(1);
-    $('growthSrc').textContent = data.estimatedGrowth && data.estimatedGrowth.fcfCagr != null
-      ? 'from ' + f.fcfHistory.length + '-year historical unlevered FCF trend (SEC filings)'
-      : 'no reliable trend in filings — conservative default, please review';
+    $('growthSrc').textContent = growthSrcText;
     $('termInput').value = 2.5;
 
     const w = data.waccEstimate;
@@ -641,6 +653,29 @@
     return { flows, pvSum, pvTerminal, enterpriseValue, equityValue, perShare };
   }
 
+  // Cyclical or one-off-hit businesses can post a depressed or negative FCFF in a single
+  // year even though the underlying business is fine across a cycle - a chipmaker in a
+  // downturn, or (very concretely) Coca-Cola's operating cash flow dropping from ~$11.6B
+  // to ~$6.8B in 2024 on cash payments tied to its long-running IRS transfer-pricing
+  // dispute. Anchoring a 5-year projection on that single depressed year, and compounding
+  // forward from it, systematically understates fair value. Standard practice is to
+  // normalize on a multi-year average instead of projecting off a trough year - so fall
+  // back to the average whenever the latest year sits well below it (below 75% of the
+  // trailing average), not just when it's outright negative. A company on a genuine,
+  // gradual decline won't trip this - only a sharp one-year drop will.
+  function computeFcfBasis(f) {
+    const histVals = f.fcfHistory.map((p) => p.fcf);
+    const avgFcf = histVals.length ? histVals.reduce((a, b) => a + b, 0) / histVals.length : null;
+    let baseFcf = f.latestFcf, fcfBasis = 'latest';
+    if (avgFcf != null && avgFcf > 0 && f.latestFcf < avgFcf * 0.75) {
+      baseFcf = avgFcf;
+      fcfBasis = 'normalized';
+    } else if (f.latestFcf <= 0) {
+      fcfBasis = 'negative';
+    }
+    return { baseFcf, fcfBasis, avgFcf, histLength: histVals.length };
+  }
+
   function recompute() {
     if (!current) return;
     const f = current.financials;
@@ -657,21 +692,7 @@
     const shares = f.latestShares;
     const netDebt = current.netDebt;
 
-    // Cyclical or one-off-hit businesses can post a negative FCFF in a single year even
-    // though the underlying business is fine across a cycle (chipmakers in a downturn,
-    // for example). Standard practice is to normalize on a multi-year average instead of
-    // projecting off a trough (or peak) year. Fall back to that average when the latest
-    // year is negative but the trailing average is not; only flag it as truly unmodelable
-    // when both are negative.
-    const histVals = f.fcfHistory.map((p) => p.fcf);
-    const avgFcf = histVals.length ? histVals.reduce((a, b) => a + b, 0) / histVals.length : null;
-    let baseFcf = f.latestFcf, fcfBasis = 'latest';
-    if (f.latestFcf <= 0 && avgFcf != null && avgFcf > 0) {
-      baseFcf = avgFcf;
-      fcfBasis = 'normalized';
-    } else if (f.latestFcf <= 0) {
-      fcfBasis = 'negative';
-    }
+    const { baseFcf, fcfBasis, avgFcf, histLength } = current.fcfBasisInfo || computeFcfBasis(f);
 
     const result = dcf(baseFcf, growth, term, wacc, years, netDebt, shares);
 
@@ -680,16 +701,16 @@
       warnBanner.hidden = false;
       warnBanner.className = 'warn-banner';
       $('negFcfWarningTitle').textContent = 'This company’s unlevered free cash flow (FCFF) has been negative on average.';
-      $('negFcfWarningBody').textContent = ' Both the latest year (' + fmtBig(f.latestFcf) + ') and the ' + histVals.length + '-year average (' + fmtBig(avgFcf) + ') are negative, ' +
+      $('negFcfWarningBody').textContent = ' Both the latest year (' + fmtBig(f.latestFcf) + ') and the ' + histLength + '-year average (' + fmtBig(avgFcf) + ') are negative, ' +
         'so a growth-based DCF genuinely doesn’t apply here — there’s no positive base to compound. Treat any number below as informational only; ' +
         'a pre-revenue or structurally unprofitable business needs a different approach (e.g. a revenue-multiple or scenario-based valuation).';
     } else if (fcfBasis === 'normalized') {
       warnBanner.hidden = false;
       warnBanner.className = 'warn-banner info';
-      $('negFcfWarningTitle').textContent = 'Latest-year FCFF was negative, likely a cyclical dip — using a normalized average instead.';
-      $('negFcfWarningBody').textContent = ' The most recent year came in at ' + fmtBig(f.latestFcf) + ', but the ' + histVals.length + '-year average is ' + fmtBig(avgFcf) + '. ' +
-        'This model uses that average as the starting point and grows from there — standard practice for cyclical businesses (semiconductors, commodities, airlines) rather than ' +
-        'projecting off a single trough year.';
+      $('negFcfWarningTitle').textContent = 'The latest year’s FCFF looks like an outlier — using a normalized average instead.';
+      $('negFcfWarningBody').textContent = ' The most recent year came in at ' + fmtBig(f.latestFcf) + ', well below the ' + histLength + '-year average of ' + fmtBig(avgFcf) + '. ' +
+        'That kind of one-year gap is usually a cyclical trough, a one-off cash payment (litigation, tax settlements), or a divestiture/timing effect — not the new normal. ' +
+        'This model starts from that average instead of compounding off a single depressed year, which is standard practice; drag the growth slider if you think the drop is structural instead.';
     } else {
       warnBanner.hidden = true;
     }
@@ -1035,10 +1056,12 @@
     cb: { position: 'The Shutdown Cornerback', color: '--info', number: 24, comp: 'Patrick Surtain II' },
     vet: { position: 'The Aging Veteran, Expensive Contract', color: '--warn', number: 7, comp: null },
     rookie: { position: 'The Practice-Squad Prospect', color: '--ink-faint', number: 0, comp: null },
+    comeback: { position: 'Coming Off an Injury Year', color: '--info', number: 44, comp: null },
   };
 
   function classifyPlayer(growth, beta, upside, fcfBasis) {
-    if (fcfBasis === 'negative' || fcfBasis === 'normalized') return 'rookie';
+    if (fcfBasis === 'negative') return 'rookie';
+    if (fcfBasis === 'normalized') return 'comeback';
     if (growth >= 0.15 && beta <= 1.15 && upside >= -0.05) return 'qb';
     if (growth >= 0.15) return 'wr';
     if (upside <= -0.15) return 'vet';
@@ -1086,6 +1109,8 @@
       why = ticker + ' plays it safe: a low beta (' + bStr + '), and the model doesn’t think you’re overpaying at today’s price. No single stat jumps off the page — it just reliably doesn’t let you down.';
     } else if (key === 'vet') {
       why = ticker + '’s growth has slowed to ' + gPct + '%/yr, and at today’s price the model sees about <strong>' + uPct + '% downside</strong> — you’re paying premium-contract money for production that’s past its peak burst.';
+    } else if (key === 'comeback') {
+      why = ticker + '’s most recent season was a real dip, but the track record before it says this isn’t who they are — more like a proven starter coming back from an off year than a player who lost it. The model gives them credit for the career average, not just the last box score.';
     } else {
       why = ticker + '’s cash flow hasn’t turned reliably positive yet — like a prospect who hasn’t proven he can produce at this level. Could turn into a star, could wash out. Too early to hand out a starting job.';
     }
