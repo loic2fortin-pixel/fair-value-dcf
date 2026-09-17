@@ -240,6 +240,12 @@
   .player-why { font-size: 14.5px; line-height: 1.6; color: var(--ink); }
   .player-why strong { color: var(--accent); }
 
+  /* Math-behind-it */
+  .math-steps { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+  .math-step { font-size: 14px; line-height: 1.6; color: var(--ink-muted); }
+  .math-step strong { color: var(--ink); font-family: "IBM Plex Mono", monospace; font-weight: 700; }
+  table.sens tr.math-total th, table.sens tr.math-total td { background: var(--surface-2); font-weight: 700; color: var(--ink); }
+
   footer { margin-top: 28px; font-size: 12px; color: var(--ink-faint); line-height: 1.6; }
   footer a { color: var(--ink-muted); }
 
@@ -349,6 +355,20 @@
           <span class="src">🏈 how many plays you're calling before assuming garbage time</span>
         </div>
       </div>
+    </div>
+
+    <div class="card">
+      <h2>The math behind it</h2>
+      <div class="analogy">🏈 The playbook, spelled out — five steps from "cash the business makes" to "what a share is worth."</div>
+      <div class="math-steps">
+        <div class="math-step"><strong>1. Cash flow.</strong> We use unlevered free cash flow (FCFF) — cash generated from operations, after tax and after reinvestment (CapEx), before any financing costs. It's what the business actually throws off regardless of how it's funded.</div>
+        <div class="math-step"><strong>2. Growth.</strong> How fast that cash flow grows for the next several years — Wall Street's own long-term consensus estimate when available (most accurate, forward-looking), a historical-filings trend otherwise.</div>
+        <div class="math-step"><strong>3. Discount rate (WACC).</strong> A dollar next year is worth less than a dollar today, and worth even less if the business is risky. WACC blends the return equity investors require (CAPM: risk-free rate + company-specific risk × market risk premium) with the cost of debt, weighted by how the company is actually financed.</div>
+        <div class="math-step"><strong>4. Terminal value.</strong> Nobody can forecast forever, so after the explicit window we assume growth settles into a stable, roughly GDP-like pace forever, and value that entire future as one lump sum (the Gordon Growth formula) — discounted back to today just like every other year.</div>
+        <div class="math-step"><strong>5. Per share.</strong> Add up all those discounted cash flows plus the discounted terminal value (enterprise value), subtract net debt (equity value), divide by shares outstanding. Compare that to today's price — that's the whole verdict.</div>
+      </div>
+      <div class="sens-scroll"><table class="sens" id="mathTable"></table></div>
+      <div class="sens-note" id="mathSummary"></div>
     </div>
 
     <div class="card" id="analystCard" hidden>
@@ -685,12 +705,27 @@
     rookie: ['Kurt Warner', 'Russell Wilson', 'Tony Romo', 'Warren Moon'],
     comeback: ['Peyton Manning', 'Adrian Peterson', 'Alex Smith', 'Drew Brees'],
   };
+  // A multiplier of 31 is ≡ -1 (mod 4), which gives catastrophically bad distribution when
+  // reduced mod a small pool size like 4 (nearly every ticker collapsed onto index 0 -
+  // "Brett Favre" for every single company). Switching the multiplier to FNV-1a's prime
+  // wasn't enough on its own - that prime is *also* ≡ -1 (mod 4), so the low 2 bits (the
+  // only ones `% 4` looks at) stayed just as correlated. Fixed by adding a proper avalanche
+  // finalizer (MurmurHash3's fmix32) that mixes the high bits into the low bits before the
+  // mod - the standard fix for exactly this class of bug.
   function pickComp(key, ticker) {
     const pool = PLAYER_COMP_POOLS[key];
     if (!pool) return null;
-    let hash = 0;
-    for (let i = 0; i < ticker.length; i++) hash = (hash * 31 + ticker.charCodeAt(i)) >>> 0;
-    return pool[hash % pool.length];
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < ticker.length; i++) {
+      hash ^= ticker.charCodeAt(i);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    hash ^= hash >>> 16;
+    hash = Math.imul(hash, 0x85ebca6b);
+    hash ^= hash >>> 13;
+    hash = Math.imul(hash, 0xc2b2ae35);
+    hash ^= hash >>> 16;
+    return pool[(hash >>> 0) % pool.length];
   }
   function fmtMoney(v) { return '$' + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function fmtBig(v) {
@@ -819,6 +854,7 @@
     renderAnalyst(current, price, result.perShare);
     renderFootballField(result.perShare, sensRange, price, current.analyst);
     if (price) renderPlayerCard(growth, price, result.perShare, fcfBasis);
+    renderMathBehind(result, netDebt, shares);
   }
 
   function renderVerdict(result, price, f, growth, term, years) {
@@ -915,6 +951,29 @@
       '<path d="' + linePath + '" fill="none" stroke="' + accent + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"></path>' +
       endpoint + xLabels +
       '</svg>';
+  }
+
+  function renderMathBehind(result, netDebt, shares) {
+    const ticker = current.company.ticker;
+    let html = '<thead><tr><th>Year</th><th>Growth</th><th>Nominal FCFF</th><th>Discount factor</th><th>Present value</th></tr></thead><tbody>';
+    result.flows.forEach((f) => {
+      html += '<tr><td class="val">Y' + f.year + '</td><td class="val">' + (f.growth * 100).toFixed(1) + '%</td>' +
+        '<td class="val">' + fmtBig(f.nominal) + '</td><td class="val">' + (f.pv / f.nominal).toFixed(3) + '×</td>' +
+        '<td class="val">' + fmtBig(f.pv) + '</td></tr>';
+    });
+    html += '<tr><td class="val">Terminal</td><td class="val">—</td><td class="val">—</td><td class="val">—</td><td class="val">' + fmtBig(result.pvTerminal) + '</td></tr>';
+    html += '</tbody><tfoot>';
+    html += '<tr class="math-total"><th colspan="4" style="text-align:left">Enterprise value (sum of the above)</th><td class="val">' + fmtBig(result.enterpriseValue) + '</td></tr>';
+    html += '<tr class="math-total"><th colspan="4" style="text-align:left">− Net debt</th><td class="val">' + fmtBig(netDebt) + '</td></tr>';
+    html += '<tr class="math-total"><th colspan="4" style="text-align:left">= Equity value</th><td class="val">' + fmtBig(result.equityValue) + '</td></tr>';
+    html += '<tr class="math-total"><th colspan="4" style="text-align:left">÷ Shares outstanding</th><td class="val">' + fmtBig(shares) + '</td></tr>';
+    html += '<tr class="math-total"><th colspan="4" style="text-align:left">= Fair value per share</th><td class="val">' + fmtMoney(result.perShare) + '</td></tr>';
+    html += '</tfoot>';
+    $('mathTable').innerHTML = html;
+
+    const tvShare = result.pvTerminal / result.enterpriseValue;
+    $('mathSummary').textContent = 'For ' + ticker + ', the terminal value makes up ' + (tvShare * 100).toFixed(0) +
+      '% of enterprise value — normal for a DCF (most of a business’s worth is always "the rest of forever"), but it also means the terminal growth and discount rate assumptions above are doing most of the work.';
   }
 
   function renderFootballField(basePerShare, sensRange, price, analyst) {
