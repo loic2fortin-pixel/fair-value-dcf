@@ -345,7 +345,7 @@
         <div class="field">
           <label>Projection window <span class="val" id="yearsVal">5 yrs</span></label>
           <input type="range" id="yearsInput" min="3" max="10" step="1" value="5" />
-          <span class="src">years of explicit forecast before the terminal value</span>
+          <span class="src" id="yearsSrc">years of explicit forecast before the terminal value</span>
           <span class="src">🏈 how many plays you're calling before assuming garbage time</span>
         </div>
       </div>
@@ -591,7 +591,9 @@
       $('waccSrc').textContent = 'required annual return — raise it for riskier businesses';
     }
 
-    $('yearsInput').value = 5;
+    const yearsForSector = sectorProjectionYears(data.analyst && data.analyst.sector);
+    $('yearsInput').value = yearsForSector.value;
+    $('yearsSrc').textContent = yearsForSector.note;
 
     ['growthInput', 'termInput', 'waccInput', 'yearsInput'].forEach((id) => {
       $(id).oninput = recompute;
@@ -645,14 +647,33 @@
     return { value: 2.5, note: 'long-run economy growth, held conservative' };
   }
 
+  // A hard 5-year window with hard-coded 2-year fade suits a mature, stable business fine,
+  // but understates a company with a genuinely long competitive-advantage runway (cloud and
+  // AI infrastructure spend for a platform business, say) - most of its real value shows up
+  // in years 6-10 that a 5-year window simply excludes. Longer default window for sectors
+  // where that long runway is plausible; still fully adjustable via the slider.
+  const SECTOR_LONG_RUNWAY = new Set(['Technology', 'Health Care', 'Healthcare', 'Communication Services']);
+  function sectorProjectionYears(sector) {
+    if (sector && SECTOR_LONG_RUNWAY.has(sector)) {
+      return { value: 10, note: 'longer runway assumed for ' + sector + ' — durable growth take longer to fade' };
+    }
+    return { value: 5, note: 'years of explicit forecast before the terminal value' };
+  }
+
   // Several real, recognizable names per archetype instead of one repeated name - which one
   // a given company gets is picked deterministically from its ticker, so it's stable across
   // reloads but varies company to company instead of every "franchise QB" being Tom Brady.
+  // The vet/rookie/comeback pools lean on well-worn, historically-settled sports narratives
+  // (a final big-money season, a doubted prospect, a celebrated injury comeback) rather than
+  // anything about a player's current, ongoing reputation.
   const PLAYER_COMP_POOLS = {
-    qb: ['Tom Brady', 'Patrick Mahomes', 'Peyton Manning', 'Joe Montana'],
+    qb: ['Tom Brady', 'Patrick Mahomes', 'Joe Montana', 'Steve Young'],
     wr: ['Tyreek Hill', 'Stefon Diggs', 'DeSean Jackson', 'Odell Beckham Jr.'],
     rb: ['Derrick Henry', 'Adrian Peterson', 'Marshawn Lynch', 'Frank Gore'],
     cb: ['Patrick Surtain II', 'Jalen Ramsey', 'Richard Sherman', 'Darrelle Revis'],
+    vet: ['Brett Favre', 'Joe Namath', 'John Elway', 'Emmitt Smith'],
+    rookie: ['Kurt Warner', 'Russell Wilson', 'Tony Romo', 'Warren Moon'],
+    comeback: ['Peyton Manning', 'Adrian Peterson', 'Alex Smith', 'Drew Brees'],
   };
   function pickComp(key, ticker) {
     const pool = PLAYER_COMP_POOLS[key];
@@ -684,7 +705,7 @@
     const flows = [];
     let pvSum = 0;
     let prev = fcf0;
-    const fadeYears = Math.min(2, years - 1);
+    const fadeYears = Math.min(Math.max(2, Math.ceil(years / 3)), years - 1);
     const flatYears = years - fadeYears;
     for (let i = 1; i <= years; i++) {
       let yearGrowth;
