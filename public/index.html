@@ -587,7 +587,8 @@
     items.forEach((r) => {
       const b = document.createElement('button');
       b.type = 'button';
-      b.innerHTML = '<span class="t">' + r.ticker + '</span><span class="n">' + escapeHtml(r.name) + '</span>';
+      const nameLabel = r.source === 'yahoo' && r.exchange ? r.name + ' · ' + r.exchange : r.name;
+      b.innerHTML = '<span class="t">' + r.ticker + '</span><span class="n">' + escapeHtml(nameLabel) + '</span>';
       b.addEventListener('click', () => loadTicker(r.ticker));
       dropdown.appendChild(b);
     });
@@ -612,7 +613,7 @@
       const res = await fetch('/api/valuation?ticker=' + encodeURIComponent(ticker));
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Lookup failed');
-      const isFinanceSector = data.analyst && data.analyst.sector === 'Finance';
+      const isFinanceSector = data.analyst && (data.analyst.sector === 'Finance' || data.analyst.sector === 'Financial Services');
       if (!data.financials || ((data.financials.latestFcf === null || data.financials.latestFcf === undefined) && !isFinanceSector)) {
         throw new Error('SEC filings for ' + ticker + " didn't include usable cash-flow tags — try a different large-cap ticker.");
       }
@@ -631,7 +632,7 @@
   function populate(data) {
     const f = data.financials;
     $('coName').textContent = data.company.name;
-    $('coMeta').textContent = data.company.ticker + (data.price ? ' · ' + data.price.exchange : '') + ' · CIK ' + data.company.cik;
+    $('coMeta').textContent = data.company.ticker + (data.price ? ' · ' + data.price.exchange : '') + (data.company.cik ? ' · CIK ' + data.company.cik : '');
     if (data.price) {
       $('coPrice').textContent = fmtMoney(data.price.price);
       $('coPriceLabel').textContent = 'live price (' + data.price.currency + ')';
@@ -644,8 +645,11 @@
     // and their real cash-flow driver is balance-sheet activity (loans, deposits) rather than
     // operating cash flow the way a normal company reports it - a standard FCFF DCF is the
     // wrong tool regardless of which accounting taxonomy the company reports under.
+    // Nasdaq (SEC-filer path) calls this sector "Finance"; Yahoo (TSX-only fallback path)
+    // calls the same thing "Financial Services" - match both so a Canadian bank gets the
+    // same honest warning a US one does instead of silently missing it.
     const sectorForBankCheck = data.analyst && data.analyst.sector;
-    $('financialSectorWarning').hidden = sectorForBankCheck !== 'Finance';
+    $('financialSectorWarning').hidden = sectorForBankCheck !== 'Finance' && sectorForBankCheck !== 'Financial Services';
 
     // seed assumption defaults
     const fcfBasisInfo = computeFcfBasis(f);
@@ -726,7 +730,10 @@
 
     $('businessTags').innerHTML = tags.map((t) => '<span>' + escapeHtml(t) + '</span>').join('');
     $('businessExtract').textContent = biz ? biz.extract : 'No summary available for this company.';
-    $('businessSource').textContent = biz && biz.wikiUrl ? 'Summary from Wikipedia (' + biz.title + ').' : '';
+    let sourceNote = '';
+    if (biz && biz.wikiUrl) sourceNote = 'Summary from Wikipedia (' + biz.title + ').';
+    else if (biz && biz.source === 'yahoo') sourceNote = 'Company profile via Yahoo Finance.';
+    $('businessSource').textContent = sourceNote;
   }
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }

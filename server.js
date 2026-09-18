@@ -7,6 +7,7 @@ const path = require('path');
 
 const PORT = process.env.PORT || 5187;
 const SEC_UA = 'DCF-Valuation-Tool research-tool@localhost';
+const YAHOO_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 // ---------------------------------------------------------------------------
 // Ticker / company search index (bundled locally, no live fetch required)
@@ -104,6 +105,21 @@ async function fetchTextWithRetry(url, headers, attempts = 2) {
   throw lastErr;
 }
 
+// Only used for Yahoo's crumb handshake, which needs the raw Set-Cookie header - fetchJson
+// and fetchText both discard headers and reject on non-2xx before the caller can inspect
+// either, neither of which works here.
+function httpGetRaw(url, headers, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers, timeout: timeoutMs }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => resolve({ statusCode: res.statusCode, headers: res.headers, body: data }));
+    });
+    req.on('timeout', () => req.destroy(new Error(`Timeout fetching ${url}`)));
+    req.on('error', reject);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // In-memory TTL cache
 // ---------------------------------------------------------------------------
@@ -143,6 +159,8 @@ const TTL = {
   BETA: 6 * 60 * 60 * 1000, // derived from weekly price history, not intraday-sensitive
   RISK_FREE: 24 * 60 * 60 * 1000, // 10y Treasury - published once a day
   FX: 24 * 60 * 60 * 1000, // FRED FX series - published once a day
+  YAHOO_SEARCH: 30 * 60 * 1000, // company name -> symbol mapping doesn't change intraday
+  YAHOO_AUTH: 50 * 60 * 1000, // session cookie + crumb - refreshed early, and on demand on a 401
 };
 
 // ---------------------------------------------------------------------------
@@ -398,7 +416,7 @@ function cagr(points, valueKey) {
 
 async function fetchPrice(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=5d`;
-  const json = await fetchWithRetry(url, { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }, 3);
+  const json = await fetchWithRetry(url, { 'User-Agent': YAHOO_UA }, 3);
   const meta = json && json.chart && json.chart.result && json.chart.result[0] && json.chart.result[0].meta;
   if (!meta || meta.regularMarketPrice === undefined) throw new Error('No price data returned');
   return {
@@ -406,6 +424,7 @@ async function fetchPrice(ticker) {
     currency: meta.currency,
     exchange: meta.fullExchangeName || meta.exchangeName,
     previousClose: meta.chartPreviousClose,
+    longName: meta.longName || meta.shortName || null,
   };
 }
 
@@ -418,7 +437,7 @@ const EQUITY_RISK_PREMIUM = 0.05; // standard long-run assumption
 
 async function fetchWeeklyReturns(symbol) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1wk&range=2y`;
-  const json = await fetchWithRetry(url, { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }, 3);
+  const json = await fetchWithRetry(url, { 'User-Agent': YAHOO_UA }, 3);
   const result = json && json.chart && json.chart.result && json.chart.result[0];
   const closes = result && result.indicators && result.indicators.quote && result.indicators.quote[0] && result.indicators.quote[0].close;
   if (!closes) throw new Error('No weekly price history for ' + symbol);
@@ -648,11 +667,180 @@ async function fetchBusinessSummary(companyName) {
 }
 
 // ---------------------------------------------------------------------------
+// TSX / non-SEC-filer fallback (Yahoo Finance fundamentals)
+// ---------------------------------------------------------------------------
+
+// The local search index and every extraction function above are built entirely from SEC
+// EDGAR data, so a company that simply doesn't file with the SEC - Aritzia, Bombardier, and
+// every other TSX/TSXV-only Canadian listing - has no data there at all, full stop, no matter
+// what taxonomy or currency logic gets added. Yahoo Finance carries most of these under a
+// ".TO"/".V"/"-B.TO"-style symbol, so unmatched tickers fall back to it here instead of a
+// bare 404.
+//
+// Yahoo's fundamentals endpoint (quoteSummary) requires a session cookie + "crumb" token -
+// undocumented, but stable in practice, and the same handshake yfinance and similar tools
+// use. Its detailed multi-year financial-statement modules (incomeStatementHistory,
+// balanceSheetHistory, cashflowStatementHistory) no longer return real line items for ANY
+// ticker, US or foreign - Yahoo appears to have locked those down entirely. The `financialData`
+// module still returns a real trailing-twelve-month snapshot (revenue, OCF, FCF, debt, cash,
+// EBITDA), so that's what this uses instead of a multi-year history. Every caller downstream
+// (cagr, median, the history chart) already degrades gracefully to "not enough history" with
+// fewer than 2 data points, so a single-point snapshot doesn't break anything - it just means
+// less trend data than the SEC path provides.
+
+async function fetchYahooCrumb() {
+  const cookieRes = await httpGetRaw('https://fc.yahoo.com', { 'User-Agent': YAHOO_UA });
+  const setCookie = cookieRes.headers['set-cookie'];
+  if (!setCookie || !setCookie.length) throw new Error('Could not obtain a Yahoo session cookie');
+  const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
+  const crumbRes = await httpGetRaw('https://query2.finance.yahoo.com/v1/test/getcrumb', { 'User-Agent': YAHOO_UA, Cookie: cookie });
+  const crumb = (crumbRes.body || '').trim();
+  if (!crumb || crumb.startsWith('{')) throw new Error('Could not obtain a Yahoo crumb');
+  return { cookie, crumb };
+}
+
+async function fetchYahooQuoteSummary(symbol, modules) {
+  async function attempt() {
+    const { cookie, crumb } = await cachedFetch('yahooAuth', TTL.YAHOO_AUTH, fetchYahooCrumb);
+    const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=${modules.join(',')}&crumb=${encodeURIComponent(crumb)}`;
+    return fetchJson(url, { 'User-Agent': YAHOO_UA, Cookie: cookie });
+  }
+  let json;
+  try {
+    json = await attempt();
+  } catch (e) {
+    if (/HTTP 401/.test(e.message)) {
+      cacheStore.delete('yahooAuth'); // stale cookie/crumb - refresh once and retry
+      json = await attempt();
+    } else if (/HTTP 404/.test(e.message)) {
+      throw new Error(`No Yahoo Finance data for symbol ${symbol}`);
+    } else {
+      throw e;
+    }
+  }
+  const result = json.quoteSummary && json.quoteSummary.result && json.quoteSummary.result[0];
+  if (!result) throw new Error(`No Yahoo Finance data for symbol ${symbol}`);
+  return result;
+}
+
+async function fetchYahooSearch(q) {
+  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=8&newsCount=0`;
+  const json = await fetchWithRetry(url, { 'User-Agent': YAHOO_UA }, 2);
+  const quotes = (json && json.quotes) || [];
+  return quotes
+    .filter((r) => r.quoteType === 'EQUITY' && r.symbol)
+    .map((r) => ({
+      ticker: r.symbol,
+      name: r.longname || r.shortname || r.symbol,
+      exchange: r.exchDisp || r.exchange || '',
+      source: 'yahoo',
+    }));
+}
+
+const YAHOO_RATING_LABELS = {
+  strong_buy: 'Strong Buy', buy: 'Buy', hold: 'Hold', underperform: 'Underperform', sell: 'Sell',
+};
+
+function buildAnalystFromYahoo(financialData, keyStats, summaryProfile) {
+  return {
+    priceTarget: financialData.targetMeanPrice ? financialData.targetMeanPrice.raw : null,
+    meanRating: financialData.recommendationKey ? (YAHOO_RATING_LABELS[financialData.recommendationKey] || financialData.recommendationKey) : null,
+    analystCount: financialData.numberOfAnalystOpinions ? financialData.numberOfAnalystOpinions.raw : null,
+    forwardEps: keyStats.forwardEps ? keyStats.forwardEps.raw : null,
+    forwardEpsFiscalEnd: null,
+    forwardEpsCount: null,
+    sector: (summaryProfile && summaryProfile.sector) || null,
+    industry: (summaryProfile && summaryProfile.industry) || null,
+    // Yahoo doesn't expose a forward-looking 5yr consensus the way Nasdaq does - trailing
+    // revenue growth is the closest available proxy, and the frontend already treats this
+    // field as just one input among several rather than gospel.
+    longTermGrowth: financialData.revenueGrowth ? financialData.revenueGrowth.raw : null,
+  };
+}
+
+// Shaped to match extractFinancials()'s output so handleValuation and the frontend can treat
+// both paths identically. Only one trailing-twelve-month data point is available (see note
+// above), and Yahoo's "freeCashflow" is levered (OCF minus CapEx, no after-tax interest
+// add-back) rather than the unlevered FCFF the SEC path computes - the closest honest
+// approximation available here, not an equivalent figure.
+function extractFinancialsFromYahoo(financialData, keyStats, fxRate) {
+  const num = (field) => (financialData[field] && typeof financialData[field].raw === 'number' ? financialData[field].raw * fxRate : null);
+  const revenue = num('totalRevenue');
+  const ocf = num('operatingCashflow');
+  const freeCashflow = num('freeCashflow');
+  const ebitda = num('ebitda');
+  const cash = num('totalCash');
+  const totalDebt = num('totalDebt') || 0;
+  const shares = keyStats.sharesOutstanding && typeof keyStats.sharesOutstanding.raw === 'number' ? keyStats.sharesOutstanding.raw : null;
+  const year = new Date().getFullYear();
+
+  return {
+    fcfHistory: freeCashflow != null ? [{ fy: year, fcf: freeCashflow }] : [],
+    latestFcf: freeCashflow,
+    latestNetIncome: null,
+    latestRevenue: revenue,
+    // No separate operating-income/D&A breakdown is available - EBITDA itself (with D&A held
+    // at 0) reproduces the real EBITDA figure for the exit-multiple cross-check without
+    // fabricating a split that isn't there.
+    latestOpIncome: ebitda,
+    latestDA: ebitda != null ? 0 : null,
+    latestCash: cash,
+    latestLongDebt: totalDebt,
+    latestShortDebt: 0,
+    latestShares: shares,
+    revenueHistory: revenue != null ? [{ fy: year, val: revenue, end: null, currency: null }] : [],
+    taxRate: 0.21, // no pretax/tax breakdown available - statutory-rate fallback, same as the SEC path uses when filings lack it
+    costOfDebtRaw: null,
+    totalDebt,
+    ocfForDisplay: ocf,
+  };
+}
+
+async function fetchYahooValuation(symbol) {
+  const result = await cachedFetch(`yahoofin:${symbol}`, TTL.FACTS, () => fetchYahooQuoteSummary(symbol, [
+    'financialData', 'defaultKeyStatistics', 'summaryProfile',
+  ]));
+  const { financialData, defaultKeyStatistics: keyStats, summaryProfile } = result;
+  if (!financialData) throw new Error(`No financial data available for ${symbol} on Yahoo Finance`);
+
+  const reportingCurrency = financialData.financialCurrency || 'USD';
+  const fxRate = await cachedFetch(`fx:${reportingCurrency}`, TTL.FX, () => fetchFxRateToUsd(reportingCurrency));
+  if (reportingCurrency !== 'USD' && fxRate == null) {
+    throw new Error(`${symbol} reports in ${reportingCurrency}, which this tool doesn't yet have an FX rate for.`);
+  }
+
+  const fin = extractFinancialsFromYahoo(financialData, keyStats || {}, fxRate || 1);
+  fin.reportingCurrency = reportingCurrency;
+  fin.fxRateToUsd = fxRate || 1;
+
+  const analyst = buildAnalystFromYahoo(financialData, keyStats || {}, summaryProfile);
+  const business = summaryProfile && summaryProfile.longBusinessSummary
+    ? { extract: summaryProfile.longBusinessSummary, title: null, source: 'yahoo' }
+    : null;
+
+  return { fin, analyst, business };
+}
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
 async function handleSearch(req, res, query) {
-  const results = searchCompanies(query.q || '');
+  const q = (query.q || '').trim();
+  const localResults = searchCompanies(q);
+  if (!q) return sendJson(res, 200, { results: localResults });
+
+  // The local index only covers SEC filers - merge in non-duplicate Yahoo hits for anything
+  // it turns up (TSX/TSXV listings among them), tagged with their exchange so the dropdown
+  // can show where the data would come from. Best-effort: a slow or failing Yahoo search
+  // just falls back to SEC-only results rather than failing the whole search.
+  let yahooResults = [];
+  try {
+    yahooResults = await cachedFetch(`yahoosearch:${q.toLowerCase()}`, TTL.YAHOO_SEARCH, () => fetchYahooSearch(q));
+  } catch (e) { /* best-effort */ }
+
+  const localTickers = new Set(localResults.map((r) => r.ticker));
+  const results = localResults.concat(yahooResults.filter((r) => !localTickers.has(r.ticker))).slice(0, 10);
   sendJson(res, 200, { results });
 }
 
@@ -661,7 +849,7 @@ async function handleValuation(req, res, query) {
   if (!tickerQ) return sendJson(res, 400, { error: 'Missing ticker' });
 
   const match = searchIndex.find((r) => r.ticker === tickerQ);
-  if (!match) return sendJson(res, 404, { error: `Ticker "${tickerQ}" not found in SEC filer list. Try the exact ticker symbol.` });
+  if (!match) return handleYahooValuation(res, tickerQ);
 
   // SEC's companyfacts payload is often the single slowest call here (large-cap XBRL history
   // can run several hundred KB), and it doesn't depend on price/analyst/beta/business data or
@@ -725,6 +913,54 @@ async function handleValuation(req, res, query) {
     waccEstimate,
     netDebt,
     asOf: new Date().toISOString(),
+  });
+}
+
+// A ticker not found in the SEC filer list either isn't a real symbol, or is a TSX/TSXV-only
+// company (Aritzia, Bombardier, etc.) that never files with the SEC at all - no amount of
+// taxonomy/currency handling on the SEC side reaches those. Try Yahoo Finance's own
+// fundamentals before giving up; see the section above for what it can and can't provide.
+async function handleYahooValuation(res, symbol) {
+  const [valuationResult, priceResult, betaResult, riskFreeResult] = await Promise.allSettled([
+    fetchYahooValuation(symbol),
+    cachedFetch(`price:${symbol}`, TTL.PRICE, () => fetchPrice(symbol)),
+    cachedFetch(`beta:${symbol}`, TTL.BETA, () => fetchBeta(symbol)),
+    cachedFetch('riskFreeRate', TTL.RISK_FREE, fetchRiskFreeRate),
+  ]);
+
+  if (valuationResult.status === 'rejected') {
+    return sendJson(res, 404, {
+      error: `Ticker "${symbol}" not found in the SEC filer list, and no Yahoo Finance fundamentals were found for it either (${valuationResult.reason.message}). If this is a Canadian listing, try its Yahoo-style symbol (e.g. "ATZ.TO").`,
+    });
+  }
+  const { fin, analyst, business } = valuationResult.value;
+  const priceInfo = priceResult.status === 'fulfilled' ? priceResult.value : null;
+  const beta = betaResult.status === 'fulfilled' ? betaResult.value : null;
+  const riskFreeRate = riskFreeResult.status === 'fulfilled' ? riskFreeResult.value : 0.042;
+
+  const fcfGrowth = cagr(fin.fcfHistory, 'fcf');
+  const revGrowth = cagr(fin.revenueHistory);
+  const netDebt = (fin.latestLongDebt || 0) + (fin.latestShortDebt || 0) - (fin.latestCash || 0);
+  const marketCap = (priceInfo && fin.latestShares) ? priceInfo.price * fin.latestShares : null;
+
+  const waccEstimate = computeWacc({
+    beta, riskFreeRate,
+    costOfDebtRaw: fin.costOfDebtRaw,
+    taxRate: fin.taxRate,
+    marketCap, totalDebt: fin.totalDebt,
+  });
+
+  sendJson(res, 200, {
+    company: { ticker: symbol, name: (priceInfo && priceInfo.longName) || symbol, cik: null },
+    price: priceInfo,
+    analyst,
+    business,
+    financials: fin,
+    estimatedGrowth: { fcfCagr: fcfGrowth, revenueCagr: revGrowth },
+    waccEstimate,
+    netDebt,
+    asOf: new Date().toISOString(),
+    dataSource: 'yahoo',
   });
 }
 
