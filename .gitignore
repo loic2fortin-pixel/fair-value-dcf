@@ -5,3 +5,4 @@ nvda_facts.json
 msft_facts.json
 *_facts.json
 check_*.js
+.claude/

@@ -108,46 +108,76 @@ async function fetchTextWithRetry(url, headers, attempts = 2) {
 // SEC XBRL extraction
 // ---------------------------------------------------------------------------
 
-// Three traps in SEC's companyfacts API, all handled here:
+const ANNUAL_FORMS = new Set(['10-K', '10-K/A', '20-F', '20-F/A', '40-F', '40-F/A']);
+
+// Four traps in SEC's companyfacts API, all handled here:
 //
 // 1. Companies switch XBRL tags mid-history (NVIDIA moved off
 //    RevenueFromContractWithCustomerExcludingAssessedTax onto plain Revenues around FY2023),
 //    so picking only the first tag that has *any* data strands you on a stale series. Fix:
 //    merge every tag variant together instead of stopping at the first match.
 //
-// 2. A 10-K's XBRL includes quarterly comparatives alongside the annual total, all stamped
-//    with the *filing's* fy/fp/form/filed metadata regardless of the fact's own duration. Fix:
-//    drop duration facts spanning under 300 days; instant facts (no "start") pass through.
+// 2. An annual filing's XBRL includes quarterly comparatives alongside the annual total, all
+//    stamped with the *filing's* fy/fp/form/filed metadata regardless of the fact's own
+//    duration. Fix: drop duration facts spanning under 300 days; instant facts (no "start")
+//    pass through.
 //
-// 3. Worse, a 10-K's multi-year comparative income statement tags two or three different
+// 3. Worse, a filing's multi-year comparative income statement tags two or three different
 //    fiscal years' full-year figures with that SAME filing-level 'fy' label (e.g. one NVIDIA
 //    10-K tags its own year, plus the prior two years' totals, all as fy:2026). Deduping by
 //    that label silently collapses distinct years into one, keeping whichever happened to be
 //    inserted first. Fix: key by the fact's own period-end date instead of SEC's fy label -
 //    that uniquely identifies the real period no matter how the filing tags it.
-function annualPointsFor(facts, taxonomy, tags) {
+//
+// 4. Foreign private issuers (most large Canadian companies among them) file 20-F/40-F
+//    instead of 10-K, report under the ifrs-full taxonomy instead of us-gaap, and often in a
+//    non-USD currency. `sources` is a list of [taxonomy, tag] pairs so a caller can supply
+//    both us-gaap and ifrs-full equivalents together; every currency-coded unit key SEC uses
+//    (not just USD) is checked, and each returned point carries its own currency so the
+//    caller can convert.
+function annualPointsFor(facts, sources) {
   const byEnd = new Map();
-  for (const tag of tags) {
+  for (const [taxonomy, tag] of sources) {
     const node = facts[taxonomy] && facts[taxonomy][tag];
-    const units = node && node.units && (node.units.USD || node.units.shares || node.units['USD/shares']);
-    if (!units) continue;
-    for (const entry of units) {
-      if (entry.fp !== 'FY') continue;
-      if (entry.val === undefined || entry.val === null || !entry.end) continue;
-      if (entry.form !== '10-K' && entry.form !== '10-K/A') continue;
-      if (entry.start) {
-        const days = (new Date(entry.end) - new Date(entry.start)) / 86400000;
-        if (days < 300) continue; // a quarterly/partial-period fact riding along on the annual filing
-      }
-      const existing = byEnd.get(entry.end);
-      if (!existing || (entry.filed && entry.filed > existing.filed)) {
-        byEnd.set(entry.end, entry);
+    if (!node || !node.units) continue;
+    for (const unitKey of Object.keys(node.units)) {
+      const isMonetary = /^[A-Z]{3}$/.test(unitKey);
+      if (!isMonetary && unitKey !== 'shares' && unitKey !== 'USD/shares') continue;
+      for (const entry of node.units[unitKey]) {
+        if (entry.fp !== 'FY') continue;
+        if (entry.val === undefined || entry.val === null || !entry.end) continue;
+        if (!ANNUAL_FORMS.has(entry.form)) continue;
+        if (entry.start) {
+          const days = (new Date(entry.end) - new Date(entry.start)) / 86400000;
+          if (days < 300) continue; // a quarterly/partial-period fact riding along on the annual filing
+        }
+        const existing = byEnd.get(entry.end);
+        if (!existing || (entry.filed && entry.filed > existing.filed)) {
+          byEnd.set(entry.end, { ...entry, currency: isMonetary ? unitKey : null });
+        }
       }
     }
   }
   return Array.from(byEnd.values())
     .sort((a, b) => new Date(a.end) - new Date(b.end))
-    .map((p) => ({ fy: parseInt(p.end.slice(0, 4), 10), val: p.val, end: p.end }));
+    .map((p) => ({ fy: parseInt(p.end.slice(0, 4), 10), val: p.val, end: p.end, currency: p.currency }));
+}
+
+// A company reports consistently in one currency; detect it from whichever core concept
+// has data, so every other series pulled for the same company can be converted the same way.
+function detectCurrency(facts) {
+  const candidates = [
+    ['us-gaap', 'NetIncomeLoss'], ['ifrs-full', 'ProfitLoss'],
+    ['us-gaap', 'Revenues'], ['ifrs-full', 'Revenue'],
+  ];
+  for (const [taxonomy, tag] of candidates) {
+    const node = facts[taxonomy] && facts[taxonomy][tag];
+    if (!node || !node.units) continue;
+    const codes = Object.keys(node.units).filter((k) => /^[A-Z]{3}$/.test(k));
+    if (codes.includes('USD')) return 'USD';
+    if (codes.length) return codes[0];
+  }
+  return 'USD';
 }
 
 function latestVal(points) {
@@ -176,61 +206,81 @@ function effectiveTaxRate(pretaxPoints, taxPoints) {
   return Math.min(0.3, Math.max(0.15, avg));
 }
 
-function extractFinancials(companyFacts) {
+// Monetary series come back tagged with the currency they were reported in (`p.currency`);
+// share-count series carry `currency: null` and pass through untouched. Converting here
+// rather than inside annualPointsFor keeps that function currency-agnostic and lets the
+// caller decide the rate once per company instead of threading it through every tag list.
+function toUsd(points, fxRate) {
+  if (fxRate === 1) return points;
+  return points.map((p) => (p.currency ? { ...p, val: p.val * fxRate } : p));
+}
+
+function extractFinancials(companyFacts, fxRate = 1) {
   const facts = companyFacts.facts || {};
 
-  const ocf = annualPointsFor(facts, 'us-gaap', [
-    'NetCashProvidedByUsedInOperatingActivities',
-    'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations',
-  ]);
-  const capex = annualPointsFor(facts, 'us-gaap', [
-    'PaymentsToAcquirePropertyPlantAndEquipment',
-    'PaymentsForCapitalImprovements',
-    'PaymentsToAcquireProductiveAssets',
-  ]);
-  const netIncome = annualPointsFor(facts, 'us-gaap', ['NetIncomeLoss']);
-  const revenue = annualPointsFor(facts, 'us-gaap', [
-    'RevenueFromContractWithCustomerExcludingAssessedTax',
-    'Revenues',
-  ]);
-  const opIncome = annualPointsFor(facts, 'us-gaap', ['OperatingIncomeLoss']);
+  const ocf = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'NetCashProvidedByUsedInOperatingActivities'],
+    ['us-gaap', 'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations'],
+  ]), fxRate);
+  const capex = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'PaymentsToAcquirePropertyPlantAndEquipment'],
+    ['us-gaap', 'PaymentsForCapitalImprovements'],
+    ['us-gaap', 'PaymentsToAcquireProductiveAssets'],
+  ]), fxRate);
+  const netIncome = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'NetIncomeLoss'],
+    ['ifrs-full', 'ProfitLoss'],
+  ]), fxRate);
+  const revenue = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'RevenueFromContractWithCustomerExcludingAssessedTax'],
+    ['us-gaap', 'Revenues'],
+    ['ifrs-full', 'Revenue'],
+  ]), fxRate);
+  const opIncome = toUsd(annualPointsFor(facts, [['us-gaap', 'OperatingIncomeLoss']]), fxRate);
   // Not every filer tags a single combined D&A figure - Microsoft, for one, splits it into
   // separate Depreciation and AmortizationOfIntangibleAssets concepts. Try the combined tag
   // first; if that's empty, sum the two separate series by period end date instead of
   // returning nothing (which was silently killing the EV/EBITDA comp and the exit-multiple
   // terminal-value cross-check for exactly the filers that split it out).
-  let da = annualPointsFor(facts, 'us-gaap', [
-    'DepreciationDepletionAndAmortization',
-    'DepreciationAmortizationAndAccretionNet',
-    'DepreciationAndAmortization',
-  ]);
+  let da = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'DepreciationDepletionAndAmortization'],
+    ['us-gaap', 'DepreciationAmortizationAndAccretionNet'],
+    ['us-gaap', 'DepreciationAndAmortization'],
+    ['ifrs-full', 'DepreciationAndAmortisationExpense'],
+  ]), fxRate);
   if (!da.length) {
-    const depreciationOnly = annualPointsFor(facts, 'us-gaap', ['Depreciation']);
-    const amortizationOnly = annualPointsFor(facts, 'us-gaap', [
-      'AmortizationOfIntangibleAssets',
-      'FiniteLivedIntangibleAssetsAmortizationExpense',
-    ]);
+    const depreciationOnly = toUsd(annualPointsFor(facts, [['us-gaap', 'Depreciation']]), fxRate);
+    const amortizationOnly = toUsd(annualPointsFor(facts, [
+      ['us-gaap', 'AmortizationOfIntangibleAssets'],
+      ['us-gaap', 'FiniteLivedIntangibleAssetsAmortizationExpense'],
+    ]), fxRate);
     if (depreciationOnly.length) {
       const amortByEnd = new Map(amortizationOnly.map((p) => [p.end, p.val]));
       da = depreciationOnly.map((p) => ({ fy: p.fy, end: p.end, val: p.val + (amortByEnd.get(p.end) || 0) }));
     }
   }
-  const cash = annualPointsFor(facts, 'us-gaap', [
-    'CashAndCashEquivalentsAtCarryingValue',
-    'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents',
-  ]);
-  const longDebt = annualPointsFor(facts, 'us-gaap', ['LongTermDebtNoncurrent', 'LongTermDebt']);
-  const shortDebt = annualPointsFor(facts, 'us-gaap', ['LongTermDebtCurrent', 'DebtCurrent']);
-  const sharesA = annualPointsFor(facts, 'dei', ['EntityCommonStockSharesOutstanding']);
-  const sharesB = annualPointsFor(facts, 'us-gaap', ['CommonStockSharesOutstanding']);
-  const pretaxIncome = annualPointsFor(facts, 'us-gaap', [
-    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',
-    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments',
-  ]);
-  const taxExpense = annualPointsFor(facts, 'us-gaap', ['IncomeTaxExpenseBenefit']);
-  const interestExpense = annualPointsFor(facts, 'us-gaap', [
-    'InterestExpense', 'InterestExpenseDebt', 'InterestAndDebtExpense',
-  ]);
+  const cash = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'CashAndCashEquivalentsAtCarryingValue'],
+    ['us-gaap', 'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents'],
+    ['ifrs-full', 'CashAndCashEquivalents'],
+  ]), fxRate);
+  const longDebt = toUsd(annualPointsFor(facts, [['us-gaap', 'LongTermDebtNoncurrent'], ['us-gaap', 'LongTermDebt']]), fxRate);
+  const shortDebt = toUsd(annualPointsFor(facts, [['us-gaap', 'LongTermDebtCurrent'], ['us-gaap', 'DebtCurrent']]), fxRate);
+  const sharesA = annualPointsFor(facts, [['dei', 'EntityCommonStockSharesOutstanding']]);
+  const sharesB = annualPointsFor(facts, [['us-gaap', 'CommonStockSharesOutstanding']]);
+  const pretaxIncome = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest'],
+    ['us-gaap', 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments'],
+    ['ifrs-full', 'ProfitLossBeforeTax'],
+  ]), fxRate);
+  const taxExpense = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'IncomeTaxExpenseBenefit'],
+    ['ifrs-full', 'IncomeTaxExpenseContinuingOperations'],
+  ]), fxRate);
+  const interestExpense = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'InterestExpense'], ['us-gaap', 'InterestExpenseDebt'], ['us-gaap', 'InterestAndDebtExpense'],
+    ['ifrs-full', 'InterestExpense'],
+  ]), fxRate);
 
   const taxRate = effectiveTaxRate(pretaxIncome, taxExpense);
 
@@ -371,6 +421,38 @@ async function fetchRiskFreeRate() {
     }
   } catch (e) { /* fall through to default */ }
   return 0.042; // reasonable fallback if FRED is unreachable
+}
+
+// Foreign private issuers (most large Canadian companies included) file with the SEC but
+// report their financials in their home currency - Royal Bank of Canada's filings are in
+// CAD, for instance. FRED publishes daily FX rates for free, no key required. `invert`
+// reflects which side of the pair that series quotes (e.g. DEXCAUS is CAD per 1 USD, so
+// converting a CAD amount to USD means dividing by it; DEXUSEU is USD per 1 EUR, so
+// converting EUR to USD means multiplying).
+const FX_SERIES = {
+  CAD: { series: 'DEXCAUS', invert: true },
+  EUR: { series: 'DEXUSEU', invert: false },
+  GBP: { series: 'DEXUSUK', invert: false },
+  JPY: { series: 'DEXJPUS', invert: true },
+  CHF: { series: 'DEXSZUS', invert: true },
+  AUD: { series: 'DEXUSAL', invert: false },
+  CNY: { series: 'DEXCHUS', invert: true },
+};
+
+async function fetchFxRateToUsd(currency) {
+  if (currency === 'USD') return 1;
+  const spec = FX_SERIES[currency];
+  if (!spec) return null; // unsupported currency - caller decides how to handle
+  try {
+    const csv = await fetchTextWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=' + spec.series, {}, 2);
+    const lines = csv.trim().split('\n');
+    for (let i = lines.length - 1; i >= 1; i--) {
+      const parts = lines[i].split(',');
+      const num = parseFloat(parts[1]);
+      if (Number.isFinite(num) && num > 0) return spec.invert ? 1 / num : num;
+    }
+  } catch (e) { /* fall through */ }
+  return null;
 }
 
 // WACC = weight_equity x CostOfEquity + weight_debt x CostOfDebt x (1 - tax)
@@ -564,7 +646,15 @@ async function handleValuation(req, res, query) {
   const riskFreeRate = riskFreeResult.status === 'fulfilled' ? riskFreeResult.value : 0.042;
   const business = businessResult.status === 'fulfilled' ? businessResult.value : null;
 
-  const fin = extractFinancials(companyFacts);
+  const reportingCurrency = detectCurrency(companyFacts.facts || {});
+  const fxRate = await fetchFxRateToUsd(reportingCurrency);
+  if (reportingCurrency !== 'USD' && fxRate == null) {
+    return sendJson(res, 502, { error: `${tickerQ} reports in ${reportingCurrency}, which this tool doesn't yet have an FX rate for.` });
+  }
+
+  const fin = extractFinancials(companyFacts, fxRate || 1);
+  fin.reportingCurrency = reportingCurrency;
+  fin.fxRateToUsd = fxRate || 1;
   const fcfGrowth = cagr(fin.fcfHistory, 'fcf');
   const revGrowth = cagr(fin.revenueHistory);
   const netDebt = (fin.latestLongDebt || 0) + (fin.latestShortDebt || 0) - (fin.latestCash || 0);

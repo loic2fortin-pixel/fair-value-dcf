@@ -325,6 +325,11 @@
       </div>
     </div>
 
+    <div class="warn-banner" id="financialSectorWarning" hidden>
+      🏦 <strong>This looks like a bank or financial institution — a standard DCF genuinely doesn't apply here.</strong>
+      <span>A lender's "product" is its balance sheet: loans, deposits, and capital, not factories or inventory. It has no meaningful CapEx in the operating sense, and its core cash flows come from financing activity a standard unlevered-FCFF model isn't built to read. Real analysts value banks with price-to-book, dividend discount, or excess-return models instead. The numbers below will likely look nonsensical — treat them as informational only.</span>
+    </div>
+
     <div class="card" id="playerCompCard" hidden>
       <h2>Final scouting report</h2>
       <div class="analogy">🏈 Rolling growth, risk, valuation and cash-flow track record into one read: if this company were an NFL player, who would it be?</div>
@@ -602,7 +607,8 @@
       const res = await fetch('/api/valuation?ticker=' + encodeURIComponent(ticker));
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Lookup failed');
-      if (!data.financials || data.financials.latestFcf === null || data.financials.latestFcf === undefined) {
+      const isFinanceSector = data.analyst && data.analyst.sector === 'Finance';
+      if (!data.financials || ((data.financials.latestFcf === null || data.financials.latestFcf === undefined) && !isFinanceSector)) {
         throw new Error('SEC filings for ' + ticker + " didn't include usable cash-flow tags — try a different large-cap ticker.");
       }
       current = data;
@@ -628,6 +634,13 @@
       $('coPrice').textContent = '—';
       $('coPriceLabel').textContent = 'price unavailable';
     }
+
+    // Banks, insurers, and other financial institutions don't have a meaningful CapEx line
+    // and their real cash-flow driver is balance-sheet activity (loans, deposits) rather than
+    // operating cash flow the way a normal company reports it - a standard FCFF DCF is the
+    // wrong tool regardless of which accounting taxonomy the company reports under.
+    const sectorForBankCheck = data.analyst && data.analyst.sector;
+    $('financialSectorWarning').hidden = sectorForBankCheck !== 'Finance';
 
     // seed assumption defaults
     const fcfBasisInfo = computeFcfBasis(f);
@@ -880,6 +893,11 @@
   // not just when it's outright negative; a company on a genuine, gradual decline won't trip
   // this - only a sharp one-year drop will.
   function computeFcfBasis(f) {
+    // Banks/insurers have no CapEx concept in their filings at all (not just a bad year) -
+    // f.latestFcf is null, not negative. Flag that distinctly so it isn't mistaken for the
+    // 'negative' case below, where null <= 0 would coerce true and mislabel "no data" as
+    // "structurally unprofitable".
+    if (f.latestFcf == null) return { baseFcf: null, fcfBasis: 'unavailable', avgFcf: null, histLength: 0 };
     const histVals = f.fcfHistory.map((p) => p.fcf);
     const medFcf = median(histVals);
     let baseFcf = f.latestFcf, fcfBasis = 'latest';
@@ -910,6 +928,20 @@
     const price = current.price ? current.price.price : null;
 
     let { baseFcf, fcfBasis, avgFcf, histLength } = current.fcfBasisInfo || computeFcfBasis(f);
+
+    // No FCF base at all (banks/insurers) - dcf(null, ...) would silently coerce to 0 and
+    // produce a confident-looking but meaningless per-share number instead of erroring out.
+    // The financial-sector banner above already explains why; bail out here rather than
+    // rendering a bogus verdict.
+    if (fcfBasis === 'unavailable') {
+      $('negFcfWarning').hidden = true;
+      $('inflectionNote').hidden = true;
+      $('explainText').textContent = 'No usable free cash flow data in SEC filings — a DCF can\'t be computed for this company (see notice above).';
+      $('fairValue').innerHTML = '—';
+      $('verdictPill').textContent = '';
+      $('verdictSub').textContent = '';
+      return;
+    }
 
     // A trailing FCFF base can badly understate a business mid-inflection - Micron's forward
     // EPS consensus ($72.93) runs roughly 10x its trailing EPS (~$7.61) on the AI/HBM memory
