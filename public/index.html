@@ -612,6 +612,9 @@
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
+  // Three different data sources, three different names for the same sector: Nasdaq's
+  // "Finance", Yahoo's "Financial Services", stockanalysis.com's GICS-standard "Financials".
+  const FINANCE_SECTOR_NAMES = new Set(['Finance', 'Financial Services', 'Financials']);
   const searchInput = $('searchInput');
   const searchBtn = $('searchBtn');
   const dropdown = $('dropdown');
@@ -738,7 +741,7 @@
       const res = await fetch('/api/valuation?ticker=' + encodeURIComponent(ticker));
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Lookup failed');
-      const isFinanceSector = data.analyst && (data.analyst.sector === 'Finance' || data.analyst.sector === 'Financial Services');
+      const isFinanceSector = data.analyst && FINANCE_SECTOR_NAMES.has(data.analyst.sector);
       if (!data.financials || ((data.financials.latestFcf === null || data.financials.latestFcf === undefined) && !isFinanceSector)) {
         throw new Error('SEC filings for ' + ticker + " didn't include usable cash-flow tags — try a different large-cap ticker.");
       }
@@ -779,11 +782,11 @@
     // and their real cash-flow driver is balance-sheet activity (loans, deposits) rather than
     // operating cash flow the way a normal company reports it - a standard FCFF DCF is the
     // wrong tool regardless of which accounting taxonomy the company reports under.
-    // Nasdaq (SEC-filer path) calls this sector "Finance"; Yahoo (TSX-only fallback path)
-    // calls the same thing "Financial Services" - match both so a Canadian bank gets the
-    // same honest warning a US one does instead of silently missing it.
-    const sectorForBankCheck = data.analyst && data.analyst.sector;
-    $('financialSectorWarning').hidden = sectorForBankCheck !== 'Finance' && sectorForBankCheck !== 'Financial Services';
+    // Nasdaq (SEC-filer path) calls this sector "Finance"; Yahoo calls the same thing
+    // "Financial Services"; stockanalysis.com (TSX fallback) uses the GICS-standard
+    // "Financials" - match all three so a Canadian bank gets the same honest warning a US
+    // one does instead of silently missing it.
+    $('financialSectorWarning').hidden = !(data.analyst && FINANCE_SECTOR_NAMES.has(data.analyst.sector));
 
     // seed assumption defaults
     const fcfBasisInfo = computeFcfBasis(f);
@@ -899,6 +902,7 @@
     let sourceNote = '';
     if (biz && biz.wikiUrl) sourceNote = 'Summary from Wikipedia (' + biz.title + ').';
     else if (biz && biz.source === 'yahoo') sourceNote = 'Company profile via Yahoo Finance.';
+    else if (biz && biz.source === 'stockanalysis') sourceNote = 'Company profile via StockAnalysis.com.';
     $('businessSource').textContent = sourceNote;
   }
 

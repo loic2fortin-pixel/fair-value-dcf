@@ -807,7 +807,221 @@ function extractFinancialsFromYahoo(financialData, keyStats, fxRate) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// TSX fundamentals via stockanalysis.com (preferred over the Yahoo crumb path above)
+// ---------------------------------------------------------------------------
+
+// stockanalysis.com's quote/financials pages are server-rendered and embed the underlying
+// data as plain (unquoted-key) JS object literals for client hydration - no cookie, no
+// crumb, no auth, and no rate limiting observed in testing (proven reliable from Render,
+// unlike Yahoo's crumb-gated endpoint above, which is under a sustained block there). It also
+// carries 5 years of real annual history instead of Yahoo's single trailing-twelve-month
+// snapshot, so fcfHistory/revenueHistory here support genuine CAGR-based growth defaults
+// rather than always falling back to a flat default. robots.txt allows crawling `/quote/`
+// pages for a generic user agent.
+//
+// Field names repeat across sections with different meanings on the same page (e.g. a raw
+// dollar "fcf" in the cash-flow section vs. a P/FCF multiple reusing the same key name in the
+// valuation section), so extraction anchors on which REQUIRED fields co-occur inside one
+// `data:{...}` object rather than on nearby chart/label text, which is more likely to change
+// than the data schema itself.
+function extractDataBlock(html, requiredFields) {
+  const re = /data:\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(html))) {
+    const block = m[1];
+    if (requiredFields.every((f) => block.includes(f + ':'))) return block;
+  }
+  return null;
+}
+
+function extractArrayField(block, key) {
+  const m = block.match(new RegExp('(?:^|[,{])' + key + ':\\[([^\\]]*)\\]'));
+  if (!m) return null;
+  return m[1].split(',').map((s) => {
+    s = s.trim();
+    if (!s || s === 'null') return null;
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : null;
+  });
+}
+
+function extractStringArrayField(block, key) {
+  const m = block.match(new RegExp('(?:^|[,{])' + key + ':\\[([^\\]]*)\\]'));
+  if (!m) return null;
+  return m[1].split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
+}
+
+async function fetchTextOk(url) {
+  const res = await httpGetRaw(url, { 'User-Agent': YAHOO_UA });
+  if (res.statusCode < 200 || res.statusCode >= 300) throw new Error(`HTTP ${res.statusCode} for ${url}`);
+  return res.body;
+}
+
+// Only the handful of Yahoo-style suffixes this app's search results actually surface for
+// Canadian listings - anything unrecognized falls through to the Yahoo crumb path instead of
+// guessing at an exchange code stockanalysis.com might not use.
+const YAHOO_SUFFIX_TO_STOCKANALYSIS_EXCHANGE = { TO: 'tsx', V: 'tsxv' };
+
+function mapToStockAnalysis(symbol) {
+  const lastDot = symbol.lastIndexOf('.');
+  if (lastDot === -1) return null;
+  const suffix = symbol.slice(lastDot + 1).toUpperCase();
+  const exchange = YAHOO_SUFFIX_TO_STOCKANALYSIS_EXCHANGE[suffix];
+  if (!exchange) return null;
+  // Yahoo uses a dash for share classes (BBD-B.TO); stockanalysis.com uses a dot (BBD.B).
+  const ticker = symbol.slice(0, lastDot).replace(/-/g, '.');
+  return { exchange, ticker };
+}
+
+async function fetchStockAnalysisFinancials(exchange, ticker) {
+  const html = await fetchTextOk(`https://stockanalysis.com/quote/${exchange}/${encodeURIComponent(ticker)}/financials/`);
+  const income = extractDataBlock(html, ['revenue', 'netinccmn', 'epsdil']);
+  if (!income) throw new Error(`No income statement data found for ${exchange}/${ticker} on stockanalysis.com`);
+  const cashFlow = extractDataBlock(html, ['ncfo', 'capex']);
+  const balance = extractDataBlock(html, ['cashAndInvestments', 'debt']);
+  const currencyMatch = html.match(/currency:"([A-Z]{3})"/);
+
+  return {
+    fiscalYears: extractStringArrayField(income, 'fiscalYear'),
+    dates: extractStringArrayField(income, 'datekey'),
+    revenue: extractArrayField(income, 'revenue'),
+    opinc: extractArrayField(income, 'opinc'),
+    netIncome: extractArrayField(income, 'netinccmn'),
+    epsdil: extractArrayField(income, 'epsdil'),
+    ncfo: cashFlow ? extractArrayField(cashFlow, 'ncfo') : null,
+    capex: cashFlow ? extractArrayField(cashFlow, 'capex') : null,
+    cash: balance ? extractArrayField(balance, 'cashAndInvestments') : null,
+    debt: balance ? extractArrayField(balance, 'debt') : null,
+    currency: currencyMatch ? currencyMatch[1] : 'USD',
+  };
+}
+
+async function fetchStockAnalysisOverview(exchange, ticker) {
+  const html = await fetchTextOk(`https://stockanalysis.com/quote/${exchange}/${encodeURIComponent(ticker)}/`);
+  const infoMatch = html.match(/infoTable:(\[\{.*?\}\])/);
+  let sector = null, industry = null;
+  if (infoMatch) {
+    // {t:"...",v:"..."} pairs - a plain regex is fine here since the surrounding literal
+    // isn't valid JSON (unquoted keys), not worth a real parser for two fields.
+    const rows = infoMatch[1].match(/\{t:"[^"]+",v:"?[^",}]+"?[^}]*\}/g) || [];
+    for (const row of rows) {
+      const m = row.match(/\{t:"([^"]+)",v:"?([^",}]+)"?/);
+      if (!m) continue;
+      if (m[1] === 'Sector') sector = m[2];
+      if (m[1] === 'Industry') industry = m[2];
+    }
+  }
+  const descMatch = html.match(/description:"([^"]{20,2000})"/);
+  return { sector, industry, description: descMatch ? descMatch[1] : null };
+}
+
+// stockanalysis.com's arrays are newest-first; annualPointsFor()'s SEC-path output (and
+// everything downstream of it - cagr(), the history chart) expects oldest-first, so this
+// reverses while building points. No direct shares-outstanding field is on this page, so
+// diluted shares are derived per-year from netIncome/EPS instead (both are present for every
+// year here). No interest-expense figure is available either, so FCFF uses a 0 add-back -
+// the same fallback the SEC path already uses for any filer that leaves interest untagged.
+function extractFinancialsFromStockAnalysis(raw, fxRate, isFinancialSector) {
+  const n = raw.revenue.length;
+  const scale = (v) => (v == null ? null : v * fxRate);
+  const points = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const fy = parseInt(raw.fiscalYears[i], 10);
+    const netIncomeRaw = raw.netIncome ? raw.netIncome[i] : null;
+    const eps = raw.epsdil ? raw.epsdil[i] : null;
+    points.push({
+      fy,
+      end: raw.dates ? raw.dates[i] : null,
+      revenue: scale(raw.revenue[i]),
+      opinc: scale(raw.opinc && raw.opinc[i]),
+      netIncome: scale(netIncomeRaw),
+      ocf: raw.ncfo ? scale(raw.ncfo[i]) : null,
+      capex: raw.capex ? scale(raw.capex[i]) : null,
+      cash: raw.cash ? scale(raw.cash[i]) : null,
+      debt: raw.debt ? scale(raw.debt[i]) : null,
+      shares: (netIncomeRaw != null && eps) ? netIncomeRaw / eps : null, // share counts don't get FX-scaled
+    });
+  }
+
+  // Unlike SEC filings or Yahoo (where a bank simply has no CapEx/OCF concept tagged at all,
+  // so these come back null on their own), stockanalysis.com's cash-flow statement DOES
+  // return numbers for a bank's "operating cash flow" - it's just measuring something
+  // completely different (loan/deposit balance-sheet swings, routinely tens of billions
+  // negative even for a healthy bank), not comparable to a normal company's OCF at all.
+  // Computing FCFF from it would produce a confident-looking but meaningless number instead
+  // of the honest null the financial-sector warning expects downstream.
+  const fcfHistory = isFinancialSector ? [] : points
+    .filter((p) => p.ocf != null && p.capex != null)
+    .map((p) => ({ fy: p.fy, fcf: p.ocf - Math.abs(p.capex) }));
+  const revenueHistory = points
+    .filter((p) => p.revenue != null)
+    .map((p) => ({ fy: p.fy, val: p.revenue, end: p.end, currency: null }));
+
+  const latest = points[points.length - 1] || {};
+  const totalDebt = latest.debt || 0;
+
+  return {
+    fcfHistory: fcfHistory.slice(-6),
+    latestFcf: fcfHistory.length ? fcfHistory[fcfHistory.length - 1].fcf : null,
+    latestNetIncome: latest.netIncome != null ? latest.netIncome : null,
+    latestRevenue: latest.revenue != null ? latest.revenue : null,
+    latestOpIncome: latest.opinc != null ? latest.opinc : null,
+    // No separate D&A breakdown on this page - operating income alone stands in for EBITDA
+    // in the exit-multiple cross-check, same approximation the Yahoo path already uses.
+    latestDA: latest.opinc != null ? 0 : null,
+    latestCash: latest.cash != null ? latest.cash : null,
+    latestLongDebt: totalDebt,
+    latestShortDebt: 0,
+    latestShares: latest.shares || null,
+    revenueHistory: revenueHistory.slice(-6),
+    taxRate: 0.21, // no pretax/tax breakdown on this page - statutory-rate fallback, same as elsewhere
+    costOfDebtRaw: null, // no interest-expense figure available
+    totalDebt,
+  };
+}
+
+async function fetchStockAnalysisValuation(symbol) {
+  const mapped = mapToStockAnalysis(symbol);
+  if (!mapped) throw new Error(`${symbol} doesn't map to a known stockanalysis.com exchange`);
+  const { exchange, ticker } = mapped;
+
+  const [finRaw, overview] = await Promise.all([
+    cachedFetch(`safin:${exchange}:${ticker}`, TTL.FACTS, () => fetchStockAnalysisFinancials(exchange, ticker)),
+    cachedFetch(`saover:${exchange}:${ticker}`, TTL.BUSINESS, () => fetchStockAnalysisOverview(exchange, ticker)),
+  ]);
+
+  const reportingCurrency = finRaw.currency || 'USD';
+  const fxRate = await cachedFetch(`fx:${reportingCurrency}`, TTL.FX, () => fetchFxRateToUsd(reportingCurrency));
+  if (reportingCurrency !== 'USD' && fxRate == null) {
+    throw new Error(`${symbol} reports in ${reportingCurrency}, which this tool doesn't yet have an FX rate for.`);
+  }
+
+  const fin = extractFinancialsFromStockAnalysis(finRaw, fxRate || 1, overview.sector === 'Financials');
+  fin.reportingCurrency = reportingCurrency;
+  fin.fxRateToUsd = fxRate || 1;
+
+  const analyst = {
+    priceTarget: null, meanRating: null, analystCount: null,
+    forwardEps: null, forwardEpsFiscalEnd: null, forwardEpsCount: null,
+    sector: overview.sector, industry: overview.industry,
+    longTermGrowth: null, forwardEpsGrowth: null,
+  };
+  const business = overview.description ? { extract: overview.description, title: null, source: 'stockanalysis' } : null;
+
+  return { fin, analyst, business };
+}
+
+// Prefer stockanalysis.com (no auth, 5-year history, proven reliable from this host) whenever
+// the symbol maps to a known exchange; fall back to Yahoo's crumb-gated single-point snapshot
+// only when it doesn't map (an exchange this app hasn't wired up) or the fetch itself fails.
 async function fetchYahooValuation(symbol) {
+  if (mapToStockAnalysis(symbol)) {
+    try {
+      return await fetchStockAnalysisValuation(symbol);
+    } catch (e) { /* fall through to Yahoo below */ }
+  }
+
   const result = await cachedFetch(`yahoofin:${symbol}`, TTL.FACTS, () => fetchYahooQuoteSummary(symbol, [
     'financialData', 'defaultKeyStatistics', 'summaryProfile',
   ]));
