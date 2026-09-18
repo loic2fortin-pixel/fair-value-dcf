@@ -952,8 +952,15 @@ async function handleYahooValuation(res, symbol) {
   ]);
 
   if (valuationResult.status === 'rejected') {
-    return sendJson(res, 404, {
-      error: `Ticker "${symbol}" not found in the SEC filer list, and no Yahoo Finance fundamentals were found for it either (${valuationResult.reason.message}). If this is a Canadian listing, try its Yahoo-style symbol (e.g. "ATZ.TO").`,
+    // A 429 here is Yahoo rate-limiting this app's hosting provider, not a problem with the
+    // ticker itself - worth telling users that plainly instead of surfacing the raw
+    // crumb-handshake error, which reads like the app is broken rather than an external
+    // limitation that may or may not clear up on a later attempt.
+    const rateLimited = /429|Too Many Requests/i.test(valuationResult.reason.message);
+    return sendJson(res, rateLimited ? 503 : 404, {
+      error: rateLimited
+        ? `Yahoo Finance is currently rate-limiting this app's server for "${symbol}" - this is an external, intermittent limit, not a problem with the ticker. Try again in a few minutes.`
+        : `Ticker "${symbol}" not found in the SEC filer list, and no Yahoo Finance fundamentals were found for it either (${valuationResult.reason.message}). If this is a Canadian listing, try its Yahoo-style symbol (e.g. "ATZ.TO").`,
     });
   }
   const { fin, analyst, business } = valuationResult.value;
