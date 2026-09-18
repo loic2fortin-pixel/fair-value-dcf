@@ -139,27 +139,53 @@
   .status-line.success { color: var(--good); font-weight: 800; }
   .status-line.fade-out { opacity: 0; }
 
-  .loading-track {
-    position: relative;
-    width: 100%;
-    height: 22px;
-    margin-top: 8px;
-    border-bottom: 2px dashed var(--border);
+  .loading-track { width: 100%; margin-top: 8px; border-radius: 6px; overflow: hidden; }
+  .loading-field { display: block; width: 100%; height: 46px; }
+  .loading-field .defender {
+    transform: translate(96px, 22px);
+    animation: defender-lunge 1.7s ease-in-out infinite;
+    transform-origin: center;
   }
-  .loading-track .runner-wrap {
-    position: absolute;
-    top: 0; left: 0;
-    animation: run-across 1.3s linear infinite alternate;
+  @keyframes defender-lunge {
+    0%, 52% { transform: translate(96px, 22px) scale(1); }
+    60% { transform: translate(114px, 31px) scale(1.15); }
+    70%, 100% { transform: translate(96px, 22px) scale(1); }
   }
-  .loading-track .runner {
-    display: inline-block;
-    font-size: 17px;
-    animation: run-bob 0.18s ease-in-out infinite alternate;
-  }
-  @keyframes run-across { from { transform: translateX(0); } to { transform: translateX(calc(100% - 22px)); } }
-  @keyframes run-bob { from { transform: translateY(0) rotate(-8deg); } to { transform: translateY(-4px) rotate(8deg); } }
   @media (prefers-reduced-motion: reduce) {
-    .loading-track .runner-wrap, .loading-track .runner { animation: none; left: 45%; }
+    .loading-field .defender { animation: none; }
+    .loading-field animateMotion { display: none; }
+  }
+
+  .touchdown-burst { position: relative; height: 0; pointer-events: none; }
+  .touchdown-burst .confetto { position: absolute; top: 4px; left: 50%; width: 6px; height: 11px; border-radius: 1px; opacity: 0; }
+  .touchdown-burst.burst .confetto { animation: confetti-burst 0.85s ease-out forwards; }
+  .confetto:nth-child(1) { background: var(--accent); --dx: -70px; --dy: -38px; --rot: 220deg; }
+  .confetto:nth-child(2) { background: var(--good); --dx: -40px; --dy: -54px; --rot: 160deg; }
+  .confetto:nth-child(3) { background: var(--info); --dx: -10px; --dy: -60px; --rot: 80deg; }
+  .confetto:nth-child(4) { background: var(--critical); --dx: 20px; --dy: -58px; --rot: -40deg; }
+  .confetto:nth-child(5) { background: var(--accent); --dx: 50px; --dy: -48px; --rot: -140deg; }
+  .confetto:nth-child(6) { background: var(--good); --dx: 72px; --dy: -24px; --rot: 200deg; }
+  .confetto:nth-child(7) { background: var(--info); --dx: -55px; --dy: -10px; --rot: 60deg; }
+  .confetto:nth-child(8) { background: var(--critical); --dx: 55px; --dy: -6px; --rot: -100deg; }
+  @keyframes confetti-burst {
+    0% { opacity: 1; transform: translate(-50%, 0) rotate(0deg) scale(1); }
+    100% { opacity: 0; transform: translate(calc(-50% + var(--dx)), var(--dy)) rotate(var(--rot)) scale(0.7); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .touchdown-burst .confetto { display: none; }
+  }
+
+  #results .card, #results .co-header, #results .warn-banner {
+    opacity: 0;
+    transform: translateY(18px);
+    transition: opacity 0.55s ease, transform 0.55s ease;
+  }
+  #results .card.revealed, #results .co-header.revealed, #results .warn-banner.revealed {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #results .card, #results .co-header, #results .warn-banner { opacity: 1; transform: none; transition: none; }
   }
 
   #results[hidden] { display: none; }
@@ -342,7 +368,25 @@
     <div class="dropdown" id="dropdown" hidden></div>
     <div class="status-line" id="statusLine"></div>
     <div class="loading-track" id="loadingTrack" hidden aria-hidden="true">
-      <span class="runner-wrap"><span class="runner">🏈</span></span>
+      <svg viewBox="0 0 400 46" preserveAspectRatio="none" class="loading-field">
+        <rect x="0" y="0" width="400" height="46" fill="#2e7d4f"></rect>
+        <rect x="362" y="0" width="38" height="46" fill="#1e4a32"></rect>
+        <line x1="362" y1="0" x2="362" y2="46" stroke="rgba(255,255,255,0.7)" stroke-width="2"></line>
+        <line x1="70" y1="0" x2="70" y2="46" stroke="rgba(255,255,255,0.3)" stroke-width="1"></line>
+        <line x1="140" y1="0" x2="140" y2="46" stroke="rgba(255,255,255,0.3)" stroke-width="1"></line>
+        <line x1="210" y1="0" x2="210" y2="46" stroke="rgba(255,255,255,0.45)" stroke-width="1.5"></line>
+        <line x1="280" y1="0" x2="280" y2="46" stroke="rgba(255,255,255,0.3)" stroke-width="1"></line>
+        <text x="381" y="27" text-anchor="middle" font-size="7" font-weight="700" fill="rgba(255,255,255,0.65)" letter-spacing="1" transform="rotate(-90 381 27)">END ZONE</text>
+        <g class="defender"><circle r="4.5" fill="rgba(20,23,15,0.6)"></circle></g>
+        <g class="runner-icon">
+          <text text-anchor="middle" dominant-baseline="middle" font-size="15">🏈</text>
+          <animateMotion dur="1.7s" repeatCount="indefinite" path="M 14,23 Q 58,7 102,23 T 190,23 T 278,23 T 350,23"></animateMotion>
+        </g>
+      </svg>
+    </div>
+    <div class="touchdown-burst" id="touchdownBurst" aria-hidden="true">
+      <span class="confetto"></span><span class="confetto"></span><span class="confetto"></span><span class="confetto"></span>
+      <span class="confetto"></span><span class="confetto"></span><span class="confetto"></span><span class="confetto"></span>
     </div>
   </div>
 
@@ -633,6 +677,13 @@
 
   let touchdownTimer = null;
 
+  function fireConfetti() {
+    const el = $('touchdownBurst');
+    el.classList.remove('burst');
+    void el.offsetWidth; // force reflow so re-adding the class restarts the CSS animation
+    el.classList.add('burst');
+  }
+
   async function loadTicker(ticker) {
     dropdown.hidden = true;
     searchInput.value = ticker;
@@ -657,6 +708,7 @@
       // the actual results, which render on the very same tick.
       statusLine.className = 'status-line success';
       statusLine.textContent = '🏈 Touchdown! Play’s ready.';
+      fireConfetti();
       populate(data);
       results.hidden = false;
       requestAnimationFrame(() => statusLine.classList.add('fade-out'));
@@ -766,6 +818,29 @@
     recompute();
 
     $('asOfLine').textContent = ' Pulled ' + new Date(data.asOf).toLocaleString() + '.';
+    setupScrollReveal();
+  }
+
+  // Every card used to just appear at once, so scrolling through a dozen sections of a fresh
+  // lookup felt like flipping through a static printout. Fade + slide each one in the moment
+  // it actually enters the viewport instead - cards already on screen when results first
+  // reveal (the header, the verdict) still appear immediately, but everything further down
+  // reveals as the user scrolls to it.
+  const revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('revealed');
+        revealObserver.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.12 });
+
+  function setupScrollReveal() {
+    results.querySelectorAll('.card, .co-header, .warn-banner').forEach((el) => {
+      el.classList.remove('revealed');
+      revealObserver.unobserve(el);
+      revealObserver.observe(el);
+    });
   }
 
   function renderBusinessCard(data) {
