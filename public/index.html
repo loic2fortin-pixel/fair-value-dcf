@@ -429,8 +429,10 @@
       a historical filings-based trend otherwise. Cash flow is unlevered free
       cash flow to the firm (FCFF = operating cash flow + after-tax interest expense − CapEx), discounted with
       mid-year convention at a WACC built from CAPM (regression beta × equity risk premium, blended with cost of
-      debt). This is a simplified model for learning purposes, not investment advice — always sanity-check the
-      assumptions above.
+      debt). Terminal value blends the Gordon Growth formula with an exit-multiple cross-check (the company's own
+      current EV/EBITDA applied to projected year-N EBITDA) when EBITDA data is available, standard practice since
+      Gordon Growth alone is very sensitive to the discount-rate/growth spread. This is a simplified model for
+      learning purposes, not investment advice — always sanity-check the assumptions above.
       <span id="asOfLine"></span>
       <div style="margin-top:10px;">© <span id="copyrightYear"></span> Loic Fortin</div>
     </footer>
@@ -746,10 +748,18 @@
   // rate straight down to the terminal rate in the last year. Standard 2-stage-DCF practice -
   // a business's growth decelerates as it scales, it doesn't hold constant for five years and
   // then instantly downshift to GDP growth on day one of year six.
-  function dcf(fcf0, growth, terminalGrowth, wacc, years, netDebt, shares) {
+  // Terminal value, two ways - and real practitioner DCFs almost never rely on Gordon
+  // Growth alone, because it's extremely sensitive to the (wacc - terminalGrowth) spread and
+  // can read as unrealistically low for a quality business purely because that spread is
+  // narrow. The standard cross-check is an exit multiple: apply a real, observed EV/EBITDA
+  // multiple (here, the company's own current one) to projected year-N EBITDA. Banking DCFs
+  // routinely show both and blend them rather than trusting the formula in isolation - that's
+  // what happens below whenever EBITDA data and a current multiple are available.
+  function dcf(fcf0, growth, terminalGrowth, wacc, years, netDebt, shares, exitMultiple, ebitda0) {
     const flows = [];
     let pvSum = 0;
     let prev = fcf0;
+    let ebitdaPrev = ebitda0;
     const fadeYears = Math.min(Math.max(2, Math.ceil(years / 3)), years - 1);
     const flatYears = years - fadeYears;
     for (let i = 1; i <= years; i++) {
@@ -766,15 +776,29 @@
       flows.push({ year: i, nominal, pv, growth: yearGrowth });
       pvSum += pv;
       prev = nominal;
+      if (ebitdaPrev != null) ebitdaPrev = ebitdaPrev * (1 + yearGrowth);
     }
     if (wacc <= terminalGrowth) return null;
     const lastNominal = flows[flows.length - 1].nominal;
-    const terminalValue = (lastNominal * (1 + terminalGrowth)) / (wacc - terminalGrowth);
+    const gordonTerminalValue = (lastNominal * (1 + terminalGrowth)) / (wacc - terminalGrowth);
+
+    let terminalValue = gordonTerminalValue;
+    let terminalMethod = 'gordon';
+    let exitTerminalValue = null;
+    if (exitMultiple != null && ebitdaPrev != null && ebitdaPrev > 0) {
+      exitTerminalValue = ebitdaPrev * exitMultiple;
+      terminalValue = (gordonTerminalValue + exitTerminalValue) / 2;
+      terminalMethod = 'blended';
+    }
+
     const pvTerminal = terminalValue / Math.pow(1 + wacc, years - 0.5);
     const enterpriseValue = pvSum + pvTerminal;
     const equityValue = enterpriseValue - netDebt;
     const perShare = equityValue / shares;
-    return { flows, pvSum, pvTerminal, enterpriseValue, equityValue, perShare };
+    return {
+      flows, pvSum, pvTerminal, enterpriseValue, equityValue, perShare,
+      terminalMethod, gordonTerminalValue, exitTerminalValue, exitMultiple, projectedEbitdaN: ebitdaPrev,
+    };
   }
 
   // Cyclical or one-off-hit businesses can post a depressed or negative FCFF in a single
@@ -815,10 +839,23 @@
 
     const shares = f.latestShares;
     const netDebt = current.netDebt;
+    const price = current.price ? current.price.price : null;
 
     const { baseFcf, fcfBasis, avgFcf, histLength } = current.fcfBasisInfo || computeFcfBasis(f);
 
-    const result = dcf(baseFcf, growth, term, wacc, years, netDebt, shares);
+    // Current EV/EBITDA multiple, for the exit-multiple terminal value cross-check inside
+    // dcf() - "if this business just keeps trading at roughly today's multiple, is the price
+    // justified?" is a different (and standard) question from what Gordon Growth answers.
+    let ebitda0 = null, exitMultiple = null;
+    if (f.latestOpIncome != null && f.latestDA != null) {
+      ebitda0 = f.latestOpIncome + f.latestDA;
+      if (price && shares && ebitda0 > 0) {
+        const marketCap = price * shares;
+        exitMultiple = (marketCap + netDebt) / ebitda0;
+      }
+    }
+
+    const result = dcf(baseFcf, growth, term, wacc, years, netDebt, shares, exitMultiple, ebitda0);
 
     const warnBanner = $('negFcfWarning');
     if (fcfBasis === 'negative') {
@@ -847,9 +884,8 @@
       return;
     }
 
-    const price = current.price ? current.price.price : null;
     renderVerdict(result, price, f, growth, term, years);
-    const sensRange = renderSensitivity(baseFcf, netDebt, shares, growth, wacc, term, years, price);
+    const sensRange = renderSensitivity(baseFcf, netDebt, shares, growth, wacc, term, years, price, exitMultiple, ebitda0);
     renderComps(current, price);
     renderAnalyst(current, price, result.perShare);
     renderFootballField(result.perShare, sensRange, price, current.analyst);
@@ -972,8 +1008,14 @@
     $('mathTable').innerHTML = html;
 
     const tvShare = result.pvTerminal / result.enterpriseValue;
-    $('mathSummary').textContent = 'For ' + ticker + ', the terminal value makes up ' + (tvShare * 100).toFixed(0) +
+    let summary = 'For ' + ticker + ', the terminal value makes up ' + (tvShare * 100).toFixed(0) +
       '% of enterprise value — normal for a DCF (most of a business’s worth is always "the rest of forever"), but it also means the terminal growth and discount rate assumptions above are doing most of the work.';
+    if (result.terminalMethod === 'blended') {
+      summary += ' Terminal value here blends two methods: the Gordon Growth formula (' + fmtBig(result.gordonTerminalValue) +
+        ') and an exit multiple — ' + ticker + '’s own current EV/EBITDA of ' + result.exitMultiple.toFixed(1) + '× applied to year-' + result.flows.length +
+        ' projected EBITDA (' + fmtBig(result.exitTerminalValue) + ') — averaged together, which is standard banking-DCF practice rather than trusting the formula alone.';
+    }
+    $('mathSummary').textContent = summary;
   }
 
   function renderFootballField(basePerShare, sensRange, price, analyst) {
@@ -1069,7 +1111,7 @@
     }
   }
 
-  function renderSensitivity(baseFcf, netDebt, shares, growth, wacc, term, years, price) {
+  function renderSensitivity(baseFcf, netDebt, shares, growth, wacc, term, years, price, exitMultiple, ebitda0) {
     const waccSteps = [-0.02, -0.01, 0, 0.01, 0.02].map((d) => wacc + d).filter((w) => w > 0);
     const termSteps = [-0.01, -0.005, 0, 0.005, 0.01].map((d) => term + d).filter((t) => t >= 0);
     let min = Infinity, max = -Infinity;
@@ -1078,7 +1120,7 @@
     waccSteps.forEach((w) => {
       html += '<tr><th>' + (w * 100).toFixed(2) + '%</th>';
       termSteps.forEach((t) => {
-        const r = dcf(baseFcf, growth, t, w, years, netDebt, shares);
+        const r = dcf(baseFcf, growth, t, w, years, netDebt, shares, exitMultiple, ebitda0);
         if (!r) { html += '<td class="val">—</td>'; return; }
         if (r.perShare < min) min = r.perShare;
         if (r.perShare > max) max = r.perShare;

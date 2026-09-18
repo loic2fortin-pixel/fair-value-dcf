@@ -194,11 +194,27 @@ function extractFinancials(companyFacts) {
     'Revenues',
   ]);
   const opIncome = annualPointsFor(facts, 'us-gaap', ['OperatingIncomeLoss']);
-  const da = annualPointsFor(facts, 'us-gaap', [
+  // Not every filer tags a single combined D&A figure - Microsoft, for one, splits it into
+  // separate Depreciation and AmortizationOfIntangibleAssets concepts. Try the combined tag
+  // first; if that's empty, sum the two separate series by period end date instead of
+  // returning nothing (which was silently killing the EV/EBITDA comp and the exit-multiple
+  // terminal-value cross-check for exactly the filers that split it out).
+  let da = annualPointsFor(facts, 'us-gaap', [
     'DepreciationDepletionAndAmortization',
     'DepreciationAmortizationAndAccretionNet',
     'DepreciationAndAmortization',
   ]);
+  if (!da.length) {
+    const depreciationOnly = annualPointsFor(facts, 'us-gaap', ['Depreciation']);
+    const amortizationOnly = annualPointsFor(facts, 'us-gaap', [
+      'AmortizationOfIntangibleAssets',
+      'FiniteLivedIntangibleAssetsAmortizationExpense',
+    ]);
+    if (depreciationOnly.length) {
+      const amortByEnd = new Map(amortizationOnly.map((p) => [p.end, p.val]));
+      da = depreciationOnly.map((p) => ({ fy: p.fy, end: p.end, val: p.val + (amortByEnd.get(p.end) || 0) }));
+    }
+  }
   const cash = annualPointsFor(facts, 'us-gaap', [
     'CashAndCashEquivalentsAtCarryingValue',
     'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents',
