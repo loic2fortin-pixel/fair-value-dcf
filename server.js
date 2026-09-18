@@ -105,6 +105,47 @@ async function fetchTextWithRetry(url, headers, attempts = 2) {
 }
 
 // ---------------------------------------------------------------------------
+// In-memory TTL cache
+// ---------------------------------------------------------------------------
+
+// Every upstream call in handleValuation was being refetched from scratch on every request,
+// even for a ticker someone had just looked up seconds earlier - the single biggest lever on
+// repeat-lookup latency is not re-fetching data that hasn't changed. This is a plain Map-based
+// TTL cache (fine for a single-instance app, no Redis needed) that also de-dupes concurrent
+// requests for the same key: a second request that arrives while the first is still in flight
+// awaits that same promise instead of firing a duplicate upstream call.
+const cacheStore = new Map(); // key -> { value, expires }
+const cachePending = new Map(); // key -> Promise
+
+function cachedFetch(key, ttlMs, fn) {
+  const hit = cacheStore.get(key);
+  if (hit && Date.now() < hit.expires) return Promise.resolve(hit.value);
+  if (cachePending.has(key)) return cachePending.get(key);
+  const promise = (async () => {
+    try {
+      const value = await fn();
+      cacheStore.set(key, { value, expires: Date.now() + ttlMs });
+      return value;
+    } finally {
+      cachePending.delete(key);
+    }
+  })();
+  cachePending.set(key, promise);
+  return promise;
+}
+
+// TTLs sized to how often each source actually changes, not to some universal default.
+const TTL = {
+  PRICE: 45 * 1000, // live quote - stays fresh enough for 30-60s
+  FACTS: 24 * 60 * 60 * 1000, // SEC XBRL filings update quarterly at most
+  BUSINESS: 7 * 24 * 60 * 60 * 1000, // Wikipedia summaries barely change week to week
+  ANALYST: 4 * 60 * 60 * 1000, // Nasdaq consensus/estimates move a few times a day
+  BETA: 6 * 60 * 60 * 1000, // derived from weekly price history, not intraday-sensitive
+  RISK_FREE: 24 * 60 * 60 * 1000, // 10y Treasury - published once a day
+  FX: 24 * 60 * 60 * 1000, // FRED FX series - published once a day
+};
+
+// ---------------------------------------------------------------------------
 // SEC XBRL extraction
 // ---------------------------------------------------------------------------
 
@@ -622,24 +663,28 @@ async function handleValuation(req, res, query) {
   const match = searchIndex.find((r) => r.ticker === tickerQ);
   if (!match) return sendJson(res, 404, { error: `Ticker "${tickerQ}" not found in SEC filer list. Try the exact ticker symbol.` });
 
-  let companyFacts;
-  try {
-    companyFacts = await fetchWithRetry(
+  // SEC's companyfacts payload is often the single slowest call here (large-cap XBRL history
+  // can run several hundred KB), and it doesn't depend on price/analyst/beta/business data or
+  // vice versa - fetching it up front and only THEN starting the rest (as this used to do)
+  // paid its full latency before any of the others even started. Firing all of them together
+  // drops total wait to the slowest single call instead of the sum of all of them.
+  const [factsResult, priceResult, analystResult, betaResult, riskFreeResult, businessResult] = await Promise.allSettled([
+    cachedFetch(`facts:${match.cik}`, TTL.FACTS, () => fetchWithRetry(
       `https://data.sec.gov/api/xbrl/companyfacts/CIK${match.cik}.json`,
       { 'User-Agent': SEC_UA },
       3
-    );
-  } catch (e) {
-    return sendJson(res, 502, { error: `Could not fetch SEC financial data for ${tickerQ}: ${e.message}` });
-  }
-
-  const [priceResult, analystResult, betaResult, riskFreeResult, businessResult] = await Promise.allSettled([
-    fetchPrice(tickerQ),
-    fetchAnalystSentiment(tickerQ),
-    fetchBeta(tickerQ),
-    fetchRiskFreeRate(),
-    fetchBusinessSummary(match.name),
+    )),
+    cachedFetch(`price:${tickerQ}`, TTL.PRICE, () => fetchPrice(tickerQ)),
+    cachedFetch(`analyst:${tickerQ}`, TTL.ANALYST, () => fetchAnalystSentiment(tickerQ)),
+    cachedFetch(`beta:${tickerQ}`, TTL.BETA, () => fetchBeta(tickerQ)),
+    cachedFetch('riskFreeRate', TTL.RISK_FREE, fetchRiskFreeRate),
+    cachedFetch(`wiki:${match.name}`, TTL.BUSINESS, () => fetchBusinessSummary(match.name)),
   ]);
+
+  if (factsResult.status === 'rejected') {
+    return sendJson(res, 502, { error: `Could not fetch SEC financial data for ${tickerQ}: ${factsResult.reason.message}` });
+  }
+  const companyFacts = factsResult.value;
   const priceInfo = priceResult.status === 'fulfilled' ? priceResult.value : null;
   const analyst = analystResult.status === 'fulfilled' ? analystResult.value : null;
   const beta = betaResult.status === 'fulfilled' ? betaResult.value : null;
@@ -647,7 +692,7 @@ async function handleValuation(req, res, query) {
   const business = businessResult.status === 'fulfilled' ? businessResult.value : null;
 
   const reportingCurrency = detectCurrency(companyFacts.facts || {});
-  const fxRate = await fetchFxRateToUsd(reportingCurrency);
+  const fxRate = await cachedFetch(`fx:${reportingCurrency}`, TTL.FX, () => fetchFxRateToUsd(reportingCurrency));
   if (reportingCurrency !== 'USD' && fxRate == null) {
     return sendJson(res, 502, { error: `${tickerQ} reports in ${reportingCurrency}, which this tool doesn't yet have an FX rate for.` });
   }
@@ -702,6 +747,10 @@ const MIME = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.woff2': 'font/woff2',
 };
 
 function serveStatic(req, res, urlPath) {
@@ -710,7 +759,14 @@ function serveStatic(req, res, urlPath) {
   fs.readFile(filePath, (err, data) => {
     if (err) { res.writeHead(404); res.end('Not found'); return; }
     const ext = path.extname(filePath);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
+    const headers = { 'Content-Type': MIME[ext] || 'application/octet-stream' };
+    // The HTML shell only changes on deploy - a short public max-age lets browsers avoid a
+    // full refetch on every navigation while must-revalidate keeps a deploy from being masked
+    // by a stale cached copy for longer than max-age. Fonts are content-hashed by filename in
+    // effect (the font itself never changes without a filename change), so cache them hard.
+    if (ext === '.html') headers['Cache-Control'] = 'public, max-age=300, must-revalidate';
+    else if (ext === '.woff2') headers['Cache-Control'] = 'public, max-age=31536000, immutable';
+    res.writeHead(200, headers);
     res.end(data);
   });
 }

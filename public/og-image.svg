@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#14170f"/>
+      <stop offset="100%" stop-color="#0e120d"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <text x="100" y="230" font-size="120">🏈</text>
+  <text x="260" y="270" font-family="Arial, sans-serif" font-weight="900" font-size="96" fill="#ffffff" letter-spacing="2">FAIR VALUE</text>
+  <text x="100" y="360" font-family="Arial, sans-serif" font-weight="400" font-size="34" fill="#b6790c">finance, called like football</text>
+  <text x="100" y="420" font-family="Arial, sans-serif" font-weight="400" font-size="28" fill="#8b9280">real SEC filings · live prices · analyst consensus · no jargon huddle</text>
+</svg>

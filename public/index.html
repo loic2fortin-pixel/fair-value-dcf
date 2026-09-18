@@ -4,10 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Fair Value</title>
+<meta name="description" content="A discounted cash flow valuator built from live SEC EDGAR filings, market prices, and Wall Street analyst consensus — real filings, no jargon, explained like a football scouting report." />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://fairvalue-0ioi.onrender.com/" />
+<meta property="og:title" content="Fair Value — DCF valuation from real filings" />
+<meta property="og:description" content="Discounted cash flow valuation from live SEC filings, market prices, and analyst consensus — finance, called like football." />
+<meta property="og:image" content="https://fairvalue-0ioi.onrender.com/og-image.svg" />
+<meta name="twitter:card" content="summary_large_image" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏈</text></svg>">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Anton&family=Barlow:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="fonts.css" rel="stylesheet">
 <style>
   :root {
     color-scheme: light;
@@ -699,7 +704,7 @@
     $('yearsSrc').textContent = yearsForSector.note;
 
     ['growthInput', 'termInput', 'waccInput', 'yearsInput'].forEach((id) => {
-      $(id).oninput = recompute;
+      $(id).oninput = scheduleRecompute;
     });
 
     renderHistoryChart(f);
@@ -908,6 +913,21 @@
       fcfBasis = 'negative';
     }
     return { baseFcf, fcfBasis, avgFcf: medFcf, histLength: histVals.length };
+  }
+
+  // Dragging a slider fires oninput far faster than the screen can repaint, and recompute()
+  // rebuilds a 5x5 sensitivity grid, the football-field SVG, and several other cards from
+  // scratch each time - coalescing to one call per animation frame keeps dragging smooth
+  // without skipping the final value (recompute() always reads the live slider values, so
+  // whichever frame actually runs still reflects wherever the slider currently sits).
+  let recomputeScheduled = false;
+  function scheduleRecompute() {
+    if (recomputeScheduled) return;
+    recomputeScheduled = true;
+    requestAnimationFrame(() => {
+      recomputeScheduled = false;
+      recompute();
+    });
   }
 
   function recompute() {
