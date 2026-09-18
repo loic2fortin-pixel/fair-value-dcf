@@ -134,8 +134,33 @@
   .dropdown .t { font-family: "IBM Plex Mono", monospace; font-weight: 600; color: var(--accent); min-width: 52px; }
   .dropdown .n { color: var(--ink-muted); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-  .status-line { margin-top: 10px; font-size: 13px; color: var(--ink-muted); min-height: 18px; }
+  .status-line { margin-top: 10px; font-size: 13px; color: var(--ink-muted); min-height: 18px; transition: opacity 0.4s ease 0.9s; }
   .status-line.error { color: var(--critical); }
+  .status-line.success { color: var(--good); font-weight: 800; }
+  .status-line.fade-out { opacity: 0; }
+
+  .loading-track {
+    position: relative;
+    width: 100%;
+    height: 22px;
+    margin-top: 8px;
+    border-bottom: 2px dashed var(--border);
+  }
+  .loading-track .runner-wrap {
+    position: absolute;
+    top: 0; left: 0;
+    animation: run-across 1.3s linear infinite alternate;
+  }
+  .loading-track .runner {
+    display: inline-block;
+    font-size: 17px;
+    animation: run-bob 0.18s ease-in-out infinite alternate;
+  }
+  @keyframes run-across { from { transform: translateX(0); } to { transform: translateX(calc(100% - 22px)); } }
+  @keyframes run-bob { from { transform: translateY(0) rotate(-8deg); } to { transform: translateY(-4px) rotate(8deg); } }
+  @media (prefers-reduced-motion: reduce) {
+    .loading-track .runner-wrap, .loading-track .runner { animation: none; left: 45%; }
+  }
 
   #results[hidden] { display: none; }
   #results { margin-top: 24px; display: flex; flex-direction: column; gap: 18px; }
@@ -316,6 +341,9 @@
     <div class="chips" id="chips"></div>
     <div class="dropdown" id="dropdown" hidden></div>
     <div class="status-line" id="statusLine"></div>
+    <div class="loading-track" id="loadingTrack" hidden aria-hidden="true">
+      <span class="runner-wrap"><span class="runner">🏈</span></span>
+    </div>
   </div>
 
   <div id="results" hidden>
@@ -503,6 +531,7 @@
   const searchBtn = $('searchBtn');
   const dropdown = $('dropdown');
   const statusLine = $('statusLine');
+  const loadingTrack = $('loadingTrack');
   const results = $('results');
   const chips = $('chips');
 
@@ -602,11 +631,15 @@
   // ---- load + compute -------------------------------------------------
   let current = null; // holds fetched base data
 
+  let touchdownTimer = null;
+
   async function loadTicker(ticker) {
     dropdown.hidden = true;
     searchInput.value = ticker;
+    clearTimeout(touchdownTimer);
     statusLine.className = 'status-line';
     statusLine.textContent = 'Pulling filings and price for ' + ticker + '…';
+    loadingTrack.hidden = false;
     searchBtn.disabled = true;
     results.hidden = true;
     try {
@@ -618,10 +651,18 @@
         throw new Error('SEC filings for ' + ticker + " didn't include usable cash-flow tags — try a different large-cap ticker.");
       }
       current = data;
-      statusLine.textContent = '';
+      loadingTrack.hidden = true;
+      // A quick "Touchdown!" flash on arrival, in keeping with the site's whole conceit -
+      // fades on its own after a moment (via the .fade-out CSS transition) without delaying
+      // the actual results, which render on the very same tick.
+      statusLine.className = 'status-line success';
+      statusLine.textContent = '🏈 Touchdown! Play’s ready.';
       populate(data);
       results.hidden = false;
+      requestAnimationFrame(() => statusLine.classList.add('fade-out'));
+      touchdownTimer = setTimeout(() => { statusLine.textContent = ''; statusLine.className = 'status-line'; }, 1400);
     } catch (e) {
+      loadingTrack.hidden = true;
       statusLine.className = 'status-line error';
       statusLine.textContent = e.message;
     } finally {
