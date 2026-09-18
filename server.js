@@ -79,32 +79,6 @@ async function fetchWithRetry(url, headers, attempts = 3) {
   throw lastErr;
 }
 
-function fetchText(url, headers, timeoutMs = 15000) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers, timeout: timeoutMs }, (res) => {
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        res.resume();
-        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-        return;
-      }
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => resolve(data));
-    });
-    req.on('timeout', () => req.destroy(new Error(`Timeout fetching ${url}`)));
-    req.on('error', reject);
-  });
-}
-
-async function fetchTextWithRetry(url, headers, attempts = 2) {
-  let lastErr;
-  for (let i = 0; i < attempts; i++) {
-    try { return await fetchText(url, headers); }
-    catch (e) { lastErr = e; await new Promise((r) => setTimeout(r, 400 * (i + 1))); }
-  }
-  throw lastErr;
-}
-
 // Only used for Yahoo's crumb handshake, which needs the raw Set-Cookie header - fetchJson
 // and fetchText both discard headers and reject on non-2xx before the caller can inspect
 // either, neither of which works here.
@@ -470,33 +444,38 @@ async function fetchBeta(ticker) {
   return computeBeta(stock, market);
 }
 
+// FRED (fred.stlouisfed.org) turned out to be unreachable from Render's network entirely -
+// not a rate limit, a hard block (likely on Render's shared datacenter IP range, a common
+// anti-scraping measure financial-data sites take against cloud egress ranges). It failed
+// completely silently here: this function's try/catch just fell back to the hardcoded 4.2%
+// default on every single request, which read as "working" (a plausible-looking number) with
+// no error anywhere - confirmed by the deployed API returning exactly 0.042 for every ticker,
+// never a real market-derived value. Yahoo's ^TNX (10y
+// Treasury yield) via the same chart endpoint this app already uses for prices and beta -
+// proven reliable from this exact host - replaces it instead of trying to fix FRED access.
 async function fetchRiskFreeRate() {
   try {
-    const csv = await fetchTextWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10', {}, 2);
-    const lines = csv.trim().split('\n');
-    for (let i = lines.length - 1; i >= 1; i--) {
-      const parts = lines[i].split(',');
-      const num = parseFloat(parts[1]);
-      if (Number.isFinite(num)) return num / 100;
-    }
+    const info = await fetchPrice('^TNX');
+    if (Number.isFinite(info.price)) return info.price / 100;
   } catch (e) { /* fall through to default */ }
-  return 0.042; // reasonable fallback if FRED is unreachable
+  return 0.042; // reasonable fallback if the quote is unreachable
 }
 
-// Foreign private issuers (most large Canadian companies included) file with the SEC but
-// report their financials in their home currency - Royal Bank of Canada's filings are in
-// CAD, for instance. FRED publishes daily FX rates for free, no key required. `invert`
-// reflects which side of the pair that series quotes (e.g. DEXCAUS is CAD per 1 USD, so
-// converting a CAD amount to USD means dividing by it; DEXUSEU is USD per 1 EUR, so
-// converting EUR to USD means multiplying).
+// Same FRED-unreachable-from-Render problem hit FX conversion, except here there's no silent
+// fallback - a wrong guess at a currency rate would produce an actively wrong valuation, so
+// handleValuation correctly errors out rather than guessing. Replaced with Yahoo's own
+// currency-pair tickers over the same already-proven chart endpoint. `invert` reflects which
+// side of the pair Yahoo quotes (e.g. CAD=X is CAD per 1 USD, so converting a CAD amount to
+// USD means dividing by it; EURUSD=X is USD per 1 EUR, so converting EUR to USD means
+// multiplying).
 const FX_SERIES = {
-  CAD: { series: 'DEXCAUS', invert: true },
-  EUR: { series: 'DEXUSEU', invert: false },
-  GBP: { series: 'DEXUSUK', invert: false },
-  JPY: { series: 'DEXJPUS', invert: true },
-  CHF: { series: 'DEXSZUS', invert: true },
-  AUD: { series: 'DEXUSAL', invert: false },
-  CNY: { series: 'DEXCHUS', invert: true },
+  CAD: { symbol: 'CAD=X', invert: true },
+  EUR: { symbol: 'EURUSD=X', invert: false },
+  GBP: { symbol: 'GBPUSD=X', invert: false },
+  JPY: { symbol: 'JPY=X', invert: true },
+  CHF: { symbol: 'CHF=X', invert: true },
+  AUD: { symbol: 'AUDUSD=X', invert: false },
+  CNY: { symbol: 'CNY=X', invert: true },
 };
 
 async function fetchFxRateToUsd(currency) {
@@ -504,13 +483,8 @@ async function fetchFxRateToUsd(currency) {
   const spec = FX_SERIES[currency];
   if (!spec) return null; // unsupported currency - caller decides how to handle
   try {
-    const csv = await fetchTextWithRetry('https://fred.stlouisfed.org/graph/fredgraph.csv?id=' + spec.series, {}, 2);
-    const lines = csv.trim().split('\n');
-    for (let i = lines.length - 1; i >= 1; i--) {
-      const parts = lines[i].split(',');
-      const num = parseFloat(parts[1]);
-      if (Number.isFinite(num) && num > 0) return spec.invert ? 1 / num : num;
-    }
+    const info = await fetchPrice(spec.symbol);
+    if (Number.isFinite(info.price) && info.price > 0) return spec.invert ? 1 / info.price : info.price;
   } catch (e) { /* fall through */ }
   return null;
 }
