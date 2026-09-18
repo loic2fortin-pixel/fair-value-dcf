@@ -175,6 +175,15 @@
   .verdict .figure { font-family: "Anton", sans-serif; font-weight: 400; font-size: 42px; letter-spacing: 0.01em; line-height: 1; }
   .verdict .figure .cur { font-family: "IBM Plex Mono", monospace; font-size: 14px; color: var(--ink-muted); font-weight: 500; margin-left: 10px; text-transform: none; letter-spacing: 0; }
   .verdict .sub { color: var(--ink-muted); font-size: 13.5px; margin-top: 6px; }
+  .call-badge {
+    display: inline-block; margin-top: 14px; font-family: "Anton", sans-serif; font-weight: 400;
+    font-size: 22px; letter-spacing: 0.04em; text-transform: uppercase; padding: 8px 18px;
+    border-radius: 6px; transform: rotate(-2deg);
+  }
+  .call-badge.good { background: var(--good); color: var(--accent-ink); box-shadow: 0 3px 0 rgba(0,0,0,0.25); }
+  .call-badge.warn { background: var(--warn); color: var(--accent-ink); box-shadow: 0 3px 0 rgba(0,0,0,0.25); }
+  .call-badge.critical { background: var(--critical); color: var(--accent-ink); box-shadow: 0 3px 0 rgba(0,0,0,0.25); }
+  .call-caption { font-size: 11px; color: var(--ink-faint); margin-top: 8px; max-width: 240px; }
   .verdict .explain { font-size: 14.5px; line-height: 1.6; }
   .verdict .explain strong { color: var(--ink); }
 
@@ -250,9 +259,39 @@
   footer a { color: var(--ink-muted); }
 
   .skeleton { color: var(--ink-muted); font-size: 13.5px; padding: 4px 0; }
+
+  /* Disclaimer modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay[hidden] { display: none; }
+  .modal-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    box-shadow: var(--shadow); max-width: 440px; width: 100%; padding: 28px 26px; text-align: center;
+  }
+  .modal-icon { font-size: 36px; margin-bottom: 10px; }
+  .modal-card h2 { font-family: "Anton", sans-serif; font-weight: 400; font-size: 24px; text-transform: uppercase; letter-spacing: 0.02em; margin: 0 0 14px; }
+  .modal-card p { font-size: 14px; line-height: 1.6; color: var(--ink-muted); text-align: left; margin: 0 0 14px; }
+  .modal-card button {
+    margin-top: 8px; font-family: "Barlow", sans-serif; font-weight: 800; font-size: 14.5px;
+    letter-spacing: 0.05em; text-transform: uppercase; padding: 12px 28px; border-radius: 8px; border: none;
+    background: var(--accent); color: var(--accent-ink); cursor: pointer; box-shadow: 0 2px 0 rgba(0,0,0,0.25);
+  }
+  .modal-card button:active { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0,0,0,0.25); }
 </style>
 </head>
 <body>
+<div class="modal-overlay" id="disclaimerOverlay" hidden>
+  <div class="modal-card">
+    <div class="modal-icon">🧮</div>
+    <h2>Before you dive in</h2>
+    <p>This tool only does the math — real SEC filings, real prices, real analyst consensus, run through a discounted cash flow model. It has no idea what happened in the news this morning, no sense of momentum, hype, or sentiment, and can't read a product launch, a lawsuit, or an earnings call.</p>
+    <p>It's one disciplined input, not the whole picture. It will not always agree with the market, and that's not automatically a bug — treat every number here as a starting point for your own thinking, not a verdict.</p>
+    <button type="button" id="disclaimerDismiss">Got it — let's go</button>
+  </div>
+</div>
+
 <div class="wrap">
 
   <header class="page">
@@ -320,6 +359,8 @@
           <div class="pill" id="verdictPill"></div>
           <div class="figure num" id="fairValue">$0.00<span class="cur" id="vsPrice"></span></div>
           <div class="sub" id="verdictSub"></div>
+          <div class="call-badge" id="callBadge"></div>
+          <div class="call-caption">what this DCF model's math implies — not personalized advice, sanity-check it yourself</div>
         </div>
         <div class="explain" id="explainText"></div>
       </div>
@@ -449,6 +490,18 @@
   const statusLine = $('statusLine');
   const results = $('results');
   const chips = $('chips');
+
+  // ---- first-visit disclaimer ----------------------------------------
+  (function () {
+    let alreadySeen = false;
+    try { alreadySeen = localStorage.getItem('fv-disclaimer-seen') === '1'; } catch (e) {}
+    const overlay = $('disclaimerOverlay');
+    if (!alreadySeen) overlay.hidden = false;
+    $('disclaimerDismiss').addEventListener('click', () => {
+      overlay.hidden = true;
+      try { localStorage.setItem('fv-disclaimer-seen', '1'); } catch (e) {}
+    });
+  })();
 
   // ---- theme toggle -------------------------------------------------
   const themeBtn = $('themeToggle');
@@ -902,13 +955,15 @@
     if (price) {
       const upside = (result.perShare - price) / price;
       const pct = (upside * 100).toFixed(1);
-      let cls, label;
-      if (upside > 0.15) { cls = 'good'; label = 'Looks undervalued'; }
-      else if (upside < -0.15) { cls = 'critical'; label = 'Looks overvalued'; }
-      else { cls = 'warn'; label = 'Roughly fairly valued'; }
+      let cls, label, call;
+      if (upside > 0.15) { cls = 'good'; label = 'Looks undervalued'; call = 'Buy'; }
+      else if (upside < -0.15) { cls = 'critical'; label = 'Looks overvalued'; call = 'Sell'; }
+      else { cls = 'warn'; label = 'Roughly fairly valued'; call = 'Hold'; }
       pill.className = 'pill ' + cls;
       pill.textContent = label;
       sub.textContent = (upside >= 0 ? 'Model implies ' + pct + '% upside' : 'Model implies ' + Math.abs(pct) + '% downside') + ' versus the current price.';
+      $('callBadge').className = 'call-badge ' + cls;
+      $('callBadge').textContent = call;
 
       const dir = upside >= 0 ? 'above' : 'below';
       const verdictWord = upside > 0.15 ? 'a good deal' : (upside < -0.15 ? 'overpaying' : 'close to fair value');
@@ -936,6 +991,8 @@
       sub.textContent = 'Could not fetch a current price to compare against.';
       $('explainText').textContent = 'Estimated intrinsic value shown above; live price was unavailable to compare.';
       $('explainFootball').textContent = '';
+      $('callBadge').textContent = '';
+      $('callBadge').className = 'call-badge';
     }
   }
 
