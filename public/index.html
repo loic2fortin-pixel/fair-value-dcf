@@ -139,21 +139,42 @@
   .status-line.success { color: var(--good); font-weight: 800; }
   .status-line.fade-out { opacity: 0; }
 
-  .loading-track { width: 100%; margin-top: 8px; border-radius: 6px; overflow: hidden; }
-  .loading-field { display: block; width: 100%; height: 46px; }
-  .loading-field .defender {
-    transform: translate(96px, 22px);
-    animation: defender-lunge 1.7s ease-in-out infinite;
-    transform-origin: center;
+  .loading-track { position: relative; width: 100%; height: 46px; margin-top: 8px; border-radius: 6px; overflow: hidden; }
+  .loading-field { display: block; width: 100%; height: 46px; position: absolute; top: 0; left: 0; }
+  .loading-track .runner, .loading-track .defender {
+    position: absolute;
+    font-size: 20px;
+    line-height: 1;
+    transform: translate(-50%, -50%);
   }
-  @keyframes defender-lunge {
-    0%, 52% { transform: translate(96px, 22px) scale(1); }
-    60% { transform: translate(114px, 31px) scale(1.15); }
-    70%, 100% { transform: translate(96px, 22px) scale(1); }
+  .loading-track .runner {
+    animation: runner-juke 1.8s linear infinite;
+  }
+  .loading-track .defender {
+    font-size: 16px;
+    animation: defender-miss 1.8s ease-in-out infinite;
+  }
+  /* Percentages of the track, not an SVG motion path - plain left/top keyframes render
+     predictably everywhere, unlike SMIL animateMotion, which some Chromium builds interpret
+     as an erratic snap between points instead of a smooth curve. */
+  @keyframes runner-juke {
+    0%   { left: 4%;  top: 60%; }
+    12%  { left: 16%; top: 25%; }
+    25%  { left: 29%; top: 70%; }
+    37%  { left: 42%; top: 25%; }
+    50%  { left: 55%; top: 70%; }
+    62%  { left: 68%; top: 25%; }
+    75%  { left: 81%; top: 65%; }
+    88%  { left: 91%; top: 45%; }
+    100% { left: 4%;  top: 60%; }
+  }
+  @keyframes defender-miss {
+    0%, 20% { left: 20%; top: 55%; transform: translate(-50%, -50%) rotate(0deg); }
+    28% { left: 30%; top: 65%; transform: translate(-50%, -50%) rotate(25deg); }
+    38%, 100% { left: 20%; top: 55%; transform: translate(-50%, -50%) rotate(0deg); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .loading-field .defender { animation: none; }
-    .loading-field animateMotion { display: none; }
+    .loading-track .runner, .loading-track .defender { animation: none; left: 45%; top: 50%; }
   }
 
   .touchdown-burst { position: relative; height: 0; pointer-events: none; }
@@ -377,12 +398,9 @@
         <line x1="210" y1="0" x2="210" y2="46" stroke="rgba(255,255,255,0.45)" stroke-width="1.5"></line>
         <line x1="280" y1="0" x2="280" y2="46" stroke="rgba(255,255,255,0.3)" stroke-width="1"></line>
         <text x="381" y="27" text-anchor="middle" font-size="7" font-weight="700" fill="rgba(255,255,255,0.65)" letter-spacing="1" transform="rotate(-90 381 27)">END ZONE</text>
-        <g class="defender"><circle r="4.5" fill="rgba(20,23,15,0.6)"></circle></g>
-        <g class="runner-icon">
-          <text text-anchor="middle" dominant-baseline="middle" font-size="15">🏈</text>
-          <animateMotion dur="1.7s" repeatCount="indefinite" path="M 14,23 Q 58,7 102,23 T 190,23 T 278,23 T 350,23"></animateMotion>
-        </g>
       </svg>
+      <span class="defender">🙅</span>
+      <span class="runner">🏃</span>
     </div>
     <div class="touchdown-burst" id="touchdownBurst" aria-hidden="true">
       <span class="confetto"></span><span class="confetto"></span><span class="confetto"></span><span class="confetto"></span>

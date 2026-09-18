@@ -686,15 +686,18 @@ async function fetchYahooCrumbOnce() {
 // Cloud hosts sharing an outbound IP pool (Render's free tier among them) can run into
 // Yahoo's rate limiting on this endpoint even on the very first request of the process,
 // because it's shared exposure across whatever else is using that IP block, not just this
-// app's own call volume. One retry after a short pause clears a transient hit; a sustained
-// block won't be fixed by retrying, so this still surfaces a clear error rather than hanging.
+// app's own call volume - observed in production as a sustained 429 "Too Many Requests",
+// not a one-off blip. A few retries with real spacing gives a short-lived block a chance to
+// clear; a longer-lived one still won't be fixed by retrying within a single request, so this
+// surfaces a clear error afterward rather than hanging indefinitely.
 async function fetchYahooCrumb() {
-  try {
-    return await fetchYahooCrumbOnce();
-  } catch (e) {
-    await new Promise((r) => setTimeout(r, 1500));
-    return fetchYahooCrumbOnce();
+  let lastErr;
+  for (const delayMs of [0, 1500, 4000]) {
+    if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+    try { return await fetchYahooCrumbOnce(); }
+    catch (e) { lastErr = e; }
   }
+  throw lastErr;
 }
 
 async function fetchYahooQuoteSummary(symbol, modules) {
@@ -847,8 +850,20 @@ async function handleSearch(req, res, query) {
     yahooResults = await cachedFetch(`yahoosearch:${q.toLowerCase()}`, TTL.YAHOO_SEARCH, () => fetchYahooSearch(q));
   } catch (e) { /* best-effort */ }
 
+  // Yahoo returns every cross-listing of the same company (its home exchange, OTC ADRs,
+  // Frankfurt/Munich/Stuttgart crosses, etc.) as separate hits, already ranked by relevance -
+  // showing all of them just looks like 5 different companies named "Aritzia". Keep only the
+  // top (most relevant) listing per company name.
+  const seenNames = new Set();
+  const dedupedYahoo = yahooResults.filter((r) => {
+    const key = r.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (seenNames.has(key)) return false;
+    seenNames.add(key);
+    return true;
+  });
+
   const localTickers = new Set(localResults.map((r) => r.ticker));
-  const results = localResults.concat(yahooResults.filter((r) => !localTickers.has(r.ticker))).slice(0, 10);
+  const results = localResults.concat(dedupedYahoo.filter((r) => !localTickers.has(r.ticker))).slice(0, 10);
   sendJson(res, 200, { results });
 }
 
