@@ -688,15 +688,39 @@ async function fetchBusinessSummary(companyName) {
 // fewer than 2 data points, so a single-point snapshot doesn't break anything - it just means
 // less trend data than the SEC path provides.
 
-async function fetchYahooCrumb() {
+// A real crumb is a short token with no whitespace (e.g. "jQJfmDIEYzr") - Yahoo returns a
+// 200 with a plain-text body even when that body is an error/rate-limit message like "Too
+// Many Requests", so status code alone doesn't catch it. Validate the shape too, or a bad
+// "crumb" silently gets used on every quoteSummary call until its TTL expires.
+function looksLikeCrumb(s) {
+  return !!s && s.length > 0 && s.length < 40 && !/\s/.test(s) && !s.startsWith('{') && !s.startsWith('<');
+}
+
+async function fetchYahooCrumbOnce() {
   const cookieRes = await httpGetRaw('https://fc.yahoo.com', { 'User-Agent': YAHOO_UA });
   const setCookie = cookieRes.headers['set-cookie'];
   if (!setCookie || !setCookie.length) throw new Error('Could not obtain a Yahoo session cookie');
   const cookie = setCookie.map((c) => c.split(';')[0]).join('; ');
   const crumbRes = await httpGetRaw('https://query2.finance.yahoo.com/v1/test/getcrumb', { 'User-Agent': YAHOO_UA, Cookie: cookie });
   const crumb = (crumbRes.body || '').trim();
-  if (!crumb || crumb.startsWith('{')) throw new Error('Could not obtain a Yahoo crumb');
+  if (crumbRes.statusCode !== 200 || !looksLikeCrumb(crumb)) {
+    throw new Error(`Could not obtain a Yahoo crumb (HTTP ${crumbRes.statusCode}: "${crumb.slice(0, 60)}")`);
+  }
   return { cookie, crumb };
+}
+
+// Cloud hosts sharing an outbound IP pool (Render's free tier among them) can run into
+// Yahoo's rate limiting on this endpoint even on the very first request of the process,
+// because it's shared exposure across whatever else is using that IP block, not just this
+// app's own call volume. One retry after a short pause clears a transient hit; a sustained
+// block won't be fixed by retrying, so this still surfaces a clear error rather than hanging.
+async function fetchYahooCrumb() {
+  try {
+    return await fetchYahooCrumbOnce();
+  } catch (e) {
+    await new Promise((r) => setTimeout(r, 1500));
+    return fetchYahooCrumbOnce();
+  }
 }
 
 async function fetchYahooQuoteSummary(symbol, modules) {
@@ -742,19 +766,29 @@ const YAHOO_RATING_LABELS = {
 };
 
 function buildAnalystFromYahoo(financialData, keyStats, summaryProfile) {
+  const forwardEps = keyStats.forwardEps ? keyStats.forwardEps.raw : null;
+  const trailingEps = keyStats.trailingEps ? keyStats.trailingEps.raw : null;
+  // Real DCFs are forward-looking - the SEC/Nasdaq path already prioritizes Wall Street's
+  // forward 5yr consensus growth over any historical trend, and this should use the same
+  // logic rather than falling back to a trailing figure just because Yahoo doesn't publish
+  // a 5yr consensus number the way Nasdaq does. Forward EPS vs trailing EPS is a real,
+  // analyst-driven forward estimate (next fiscal year, not 5yr) - genuinely forward, just a
+  // shorter horizon, and labeled as such on the frontend rather than mislabeled "long-term".
+  let forwardEpsGrowth = null;
+  if (forwardEps != null && trailingEps != null && trailingEps > 0) {
+    forwardEpsGrowth = forwardEps / trailingEps - 1;
+  }
   return {
     priceTarget: financialData.targetMeanPrice ? financialData.targetMeanPrice.raw : null,
     meanRating: financialData.recommendationKey ? (YAHOO_RATING_LABELS[financialData.recommendationKey] || financialData.recommendationKey) : null,
     analystCount: financialData.numberOfAnalystOpinions ? financialData.numberOfAnalystOpinions.raw : null,
-    forwardEps: keyStats.forwardEps ? keyStats.forwardEps.raw : null,
+    forwardEps,
     forwardEpsFiscalEnd: null,
     forwardEpsCount: null,
     sector: (summaryProfile && summaryProfile.sector) || null,
     industry: (summaryProfile && summaryProfile.industry) || null,
-    // Yahoo doesn't expose a forward-looking 5yr consensus the way Nasdaq does - trailing
-    // revenue growth is the closest available proxy, and the frontend already treats this
-    // field as just one input among several rather than gospel.
-    longTermGrowth: financialData.revenueGrowth ? financialData.revenueGrowth.raw : null,
+    longTermGrowth: null, // no real 5yr consensus available from Yahoo - see forwardEpsGrowth instead
+    forwardEpsGrowth,
   };
 }
 

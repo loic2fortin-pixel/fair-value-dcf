@@ -698,6 +698,7 @@
 
     let growthDefault, growthSrcText;
     const ltg = data.analyst && data.analyst.longTermGrowth;
+    const forwardEpsGrowth = data.analyst && data.analyst.forwardEpsGrowth;
     const fcfG = data.estimatedGrowth && data.estimatedGrowth.fcfCagr;
     const revG = data.estimatedGrowth && data.estimatedGrowth.revenueCagr;
     if (ltg != null) {
@@ -707,6 +708,14 @@
       // the single biggest accuracy upgrade available - use it whenever it's on offer.
       growthDefault = clamp(ltg * 100, -10, 28);
       growthSrcText = 'Wall Street consensus long-term (5yr) earnings growth estimate — the most forward-looking signal available';
+    } else if (forwardEpsGrowth != null) {
+      // Companies without a Nasdaq 5yr consensus (the TSX/Yahoo fallback path) still get a
+      // real forward-looking figure here - analyst forward EPS vs trailing EPS - rather than
+      // dropping to a trailing historical trend. Same "prefer forward over trailing" principle
+      // as above, just a shorter (next-fiscal-year) horizon, so it's labeled honestly instead
+      // of claiming a 5yr consensus that doesn't exist for this filer.
+      growthDefault = clamp(forwardEpsGrowth * 100, -10, 28);
+      growthSrcText = 'Analyst forward EPS vs. trailing EPS (next fiscal year consensus) — forward-looking, but not a 5yr estimate';
     } else if (fcfBasisInfo.fcfBasis === 'normalized' && revG != null) {
       // The FCF trend itself is contaminated by the same anomalous year that triggered
       // normalization (a one-off cash payment distorts both the level AND the trend line
