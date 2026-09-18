@@ -343,6 +343,11 @@
       <span id="negFcfWarningBody"></span>
     </div>
 
+    <div class="warn-banner info" id="inflectionNote" hidden>
+      📈 <strong id="inflectionNoteTitle"></strong>
+      <span id="inflectionNoteBody"></span>
+    </div>
+
     <div class="card" id="businessCard" hidden>
       <h2>What this team actually does</h2>
       <div class="analogy">🏈 The playbook — where the money comes from before we talk about what it's worth.</div>
@@ -854,27 +859,37 @@
     };
   }
 
+  function median(vals) {
+    if (!vals.length) return null;
+    const s = vals.slice().sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  }
+
   // Cyclical or one-off-hit businesses can post a depressed or negative FCFF in a single
   // year even though the underlying business is fine across a cycle - a chipmaker in a
-  // downturn, or (very concretely) Coca-Cola's operating cash flow dropping from ~$11.6B
-  // to ~$6.8B in 2024 on cash payments tied to its long-running IRS transfer-pricing
-  // dispute. Anchoring a 5-year projection on that single depressed year, and compounding
-  // forward from it, systematically understates fair value. Standard practice is to
-  // normalize on a multi-year average instead of projecting off a trough year - so fall
-  // back to the average whenever the latest year sits well below it (below 75% of the
-  // trailing average), not just when it's outright negative. A company on a genuine,
-  // gradual decline won't trip this - only a sharp one-year drop will.
+  // downturn, Coca-Cola's operating cash flow dropping on IRS settlement payments, or (the
+  // case that forced this fix) Amazon's history holding two deeply negative COVID-era capex
+  // years (-$13B, -$15B) right alongside normal $27-35B years. Anchoring a projection on a
+  // single depressed year, and compounding forward from it, systematically understates fair
+  // value - but normalizing on a simple *average* isn't robust either, because it's exactly
+  // as vulnerable to a couple of extreme outlier years dragging it far from what any of the
+  // "normal" years actually looked like (Amazon's mean lands at ~$12B; every normal year sits
+  // at $27B+). The median is standard practice for exactly this - unmoved by outliers on
+  // either side. Falls back to it whenever the latest year sits well below it (below 75%),
+  // not just when it's outright negative; a company on a genuine, gradual decline won't trip
+  // this - only a sharp one-year drop will.
   function computeFcfBasis(f) {
     const histVals = f.fcfHistory.map((p) => p.fcf);
-    const avgFcf = histVals.length ? histVals.reduce((a, b) => a + b, 0) / histVals.length : null;
+    const medFcf = median(histVals);
     let baseFcf = f.latestFcf, fcfBasis = 'latest';
-    if (avgFcf != null && avgFcf > 0 && f.latestFcf < avgFcf * 0.75) {
-      baseFcf = avgFcf;
+    if (medFcf != null && medFcf > 0 && f.latestFcf < medFcf * 0.75) {
+      baseFcf = medFcf;
       fcfBasis = 'normalized';
     } else if (f.latestFcf <= 0) {
       fcfBasis = 'negative';
     }
-    return { baseFcf, fcfBasis, avgFcf, histLength: histVals.length };
+    return { baseFcf, fcfBasis, avgFcf: medFcf, histLength: histVals.length };
   }
 
   function recompute() {
@@ -894,7 +909,27 @@
     const netDebt = current.netDebt;
     const price = current.price ? current.price.price : null;
 
-    const { baseFcf, fcfBasis, avgFcf, histLength } = current.fcfBasisInfo || computeFcfBasis(f);
+    let { baseFcf, fcfBasis, avgFcf, histLength } = current.fcfBasisInfo || computeFcfBasis(f);
+
+    // A trailing FCFF base can badly understate a business mid-inflection - Micron's forward
+    // EPS consensus ($72.93) runs roughly 10x its trailing EPS (~$7.61) on the AI/HBM memory
+    // supercycle, a step-change no smooth growth-off-a-trailing-base model can capture. Real
+    // analyst forward-EPS data (already fetched for the comps tile) is a direct, principled
+    // signal for this: when it implies a materially different earnings run-rate than trailing
+    // results show, scale the FCFF base by that same ratio rather than silently ignoring it.
+    // Applies uniformly to every ticker with big analyst estimate revisions, not just MU.
+    let epsInflectionRatio = null;
+    const an = current.analyst;
+    if (an && an.forwardEps != null && f.latestNetIncome && f.latestShares) {
+      const trailingEps = f.latestNetIncome / f.latestShares;
+      if (trailingEps > 0) {
+        const ratio = clamp(an.forwardEps / trailingEps, 0.5, 3);
+        if (ratio > 1.3 || ratio < 0.77) {
+          baseFcf = baseFcf * ratio;
+          epsInflectionRatio = ratio;
+        }
+      }
+    }
 
     // Current EV/EBITDA multiple, for the exit-multiple terminal value cross-check inside
     // dcf() - "if this business just keeps trading at roughly today's multiple, is the price
@@ -914,19 +949,31 @@
     if (fcfBasis === 'negative') {
       warnBanner.hidden = false;
       warnBanner.className = 'warn-banner';
-      $('negFcfWarningTitle').textContent = 'This company’s unlevered free cash flow (FCFF) has been negative on average.';
-      $('negFcfWarningBody').textContent = ' Both the latest year (' + fmtBig(f.latestFcf) + ') and the ' + histLength + '-year average (' + fmtBig(avgFcf) + ') are negative, ' +
+      $('negFcfWarningTitle').textContent = 'This company’s unlevered free cash flow (FCFF) has been negative on the whole.';
+      $('negFcfWarningBody').textContent = ' Both the latest year (' + fmtBig(f.latestFcf) + ') and the ' + histLength + '-year median (' + fmtBig(avgFcf) + ') are negative, ' +
         'so a growth-based DCF genuinely doesn’t apply here — there’s no positive base to compound. Treat any number below as informational only; ' +
         'a pre-revenue or structurally unprofitable business needs a different approach (e.g. a revenue-multiple or scenario-based valuation).';
     } else if (fcfBasis === 'normalized') {
       warnBanner.hidden = false;
       warnBanner.className = 'warn-banner info';
-      $('negFcfWarningTitle').textContent = 'The latest year’s FCFF looks like an outlier — using a normalized average instead.';
-      $('negFcfWarningBody').textContent = ' The most recent year came in at ' + fmtBig(f.latestFcf) + ', well below the ' + histLength + '-year average of ' + fmtBig(avgFcf) + '. ' +
-        'That kind of one-year gap is usually a cyclical trough, a one-off cash payment (litigation, tax settlements), or a divestiture/timing effect — not the new normal. ' +
-        'This model starts from that average instead of compounding off a single depressed year, which is standard practice; drag the growth slider if you think the drop is structural instead.';
+      $('negFcfWarningTitle').textContent = 'The latest year’s FCFF looks like an outlier — using the historical median instead.';
+      $('negFcfWarningBody').textContent = ' The most recent year came in at ' + fmtBig(f.latestFcf) + ', well below the ' + histLength + '-year median of ' + fmtBig(avgFcf) + '. ' +
+        'That kind of one-year gap is usually a cyclical trough, a one-off cash payment (litigation, tax settlements), or a heavy investment cycle — not the new normal. ' +
+        'This model uses the median rather than the mean specifically because a couple of extreme years (either direction) can drag a simple average far from what a normal year actually looks like; ' +
+        'drag the growth slider if you think the drop is structural instead.';
     } else {
       warnBanner.hidden = true;
+    }
+
+    const inflectionNote = $('inflectionNote');
+    if (epsInflectionRatio != null) {
+      inflectionNote.hidden = false;
+      const dir = epsInflectionRatio > 1 ? 'well above' : 'well below';
+      $('inflectionNoteTitle').textContent = 'Analysts expect a real earnings inflection here — the cash-flow base is scaled to match.';
+      $('inflectionNoteBody').textContent = ' Consensus forward EPS is ' + dir + ' trailing EPS (about ' + epsInflectionRatio.toFixed(1) + '× the trailing run-rate). ' +
+        'A model that only grows off last year’s trailing cash flow would miss that step-change entirely, so the FCFF starting point is scaled by the same ratio before projecting forward.';
+    } else {
+      inflectionNote.hidden = true;
     }
 
     if (!result) {
