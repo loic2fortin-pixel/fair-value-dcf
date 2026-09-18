@@ -325,6 +325,11 @@
       </div>
     </div>
 
+    <div class="warn-banner" id="financialSectorWarning" hidden>
+      🏦 <strong>This looks like a bank or financial institution — a standard DCF genuinely doesn't apply here.</strong>
+      <span>A lender's "product" is its balance sheet: loans, deposits, and capital, not factories or inventory. It has no meaningful CapEx in the operating sense, and its core cash flows come from financing activity a standard unlevered-FCFF model isn't built to read. Real analysts value banks with price-to-book, dividend discount, or excess-return models instead. The numbers below will likely look nonsensical — treat them as informational only.</span>
+    </div>
+
     <div class="card" id="playerCompCard" hidden>
       <h2>Final scouting report</h2>
       <div class="analogy">🏈 Rolling growth, risk, valuation and cash-flow track record into one read: if this company were an NFL player, who would it be?</div>
@@ -628,6 +633,13 @@
       $('coPrice').textContent = '—';
       $('coPriceLabel').textContent = 'price unavailable';
     }
+
+    // Banks, insurers, and other financial institutions don't have a meaningful CapEx line
+    // and their real cash-flow driver is balance-sheet activity (loans, deposits) rather than
+    // operating cash flow the way a normal company reports it - a standard FCFF DCF is the
+    // wrong tool regardless of which accounting taxonomy the company reports under.
+    const sectorForBankCheck = data.analyst && data.analyst.sector;
+    $('financialSectorWarning').hidden = sectorForBankCheck !== 'Finance';
 
     // seed assumption defaults
     const fcfBasisInfo = computeFcfBasis(f);
