@@ -3,3 +3,5 @@ node_modules/
 .DS_Store
 nvda_facts.json
 msft_facts.json
+*_facts.json
+check_*.js
