@@ -141,40 +141,45 @@
 
   .loading-track { position: relative; width: 100%; height: 46px; margin-top: 8px; border-radius: 6px; overflow: hidden; }
   .loading-field { display: block; width: 100%; height: 46px; position: absolute; top: 0; left: 0; }
-  .loading-track .runner, .loading-track .defender {
+  .loading-track .runner-fig, .loading-track .defender-fig {
     position: absolute;
-    font-size: 20px;
-    line-height: 1;
-    transform: translate(-50%, -50%);
+    width: 26px; height: 26px;
+    overflow: visible;
   }
-  .loading-track .runner {
+  .loading-track .runner-fig {
     animation: runner-juke 1.8s linear infinite;
   }
-  .loading-track .defender {
-    font-size: 16px;
-    animation: defender-miss 1.8s ease-in-out infinite;
+  .loading-track .defender-fig {
+    left: 15%; top: 66%;
+    transform: translate(-50%, -50%) rotate(0deg);
+    animation: defender-whiff 1.8s ease-in-out infinite;
+    transform-origin: 60% 90%;
   }
   /* Percentages of the track, not an SVG motion path - plain left/top keyframes render
      predictably everywhere, unlike SMIL animateMotion, which some Chromium builds interpret
      as an erratic snap between points instead of a smooth curve. */
   @keyframes runner-juke {
-    0%   { left: 4%;  top: 60%; }
-    12%  { left: 16%; top: 25%; }
-    25%  { left: 29%; top: 70%; }
-    37%  { left: 42%; top: 25%; }
-    50%  { left: 55%; top: 70%; }
-    62%  { left: 68%; top: 25%; }
-    75%  { left: 81%; top: 65%; }
-    88%  { left: 91%; top: 45%; }
-    100% { left: 4%;  top: 60%; }
+    0%   { left: 4%;  top: 60%; transform: translate(-50%, -50%) scaleX(1); }
+    12%  { left: 16%; top: 25%; transform: translate(-50%, -50%) scaleX(1); }
+    25%  { left: 29%; top: 70%; transform: translate(-50%, -50%) scaleX(1); }
+    37%  { left: 42%; top: 25%; transform: translate(-50%, -50%) scaleX(1); }
+    50%  { left: 55%; top: 70%; transform: translate(-50%, -50%) scaleX(1); }
+    62%  { left: 68%; top: 25%; transform: translate(-50%, -50%) scaleX(1); }
+    75%  { left: 81%; top: 65%; transform: translate(-50%, -50%) scaleX(1); }
+    88%  { left: 91%; top: 45%; transform: translate(-50%, -50%) scaleX(1); }
+    100% { left: 4%;  top: 60%; transform: translate(-50%, -50%) scaleX(1); }
   }
-  @keyframes defender-miss {
-    0%, 20% { left: 20%; top: 55%; transform: translate(-50%, -50%) rotate(0deg); }
-    28% { left: 30%; top: 65%; transform: translate(-50%, -50%) rotate(25deg); }
-    38%, 100% { left: 20%; top: 55%; transform: translate(-50%, -50%) rotate(0deg); }
+  /* Fixed in place near the line of scrimmage (never moves toward the runner's lane) - just
+     a quick forward-lean-and-flop, like a tackle attempt that missed as the runner already
+     blew past, instead of the earlier version's lunge that visually crossed into the runner's
+     path and read as two characters running at each other. */
+  @keyframes defender-whiff {
+    0%, 15% { transform: translate(-50%, -50%) rotate(0deg); }
+    24% { transform: translate(-50%, -50%) rotate(38deg); }
+    34%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .loading-track .runner, .loading-track .defender { animation: none; left: 45%; top: 50%; }
+    .loading-track .runner-fig, .loading-track .defender-fig { animation: none; left: 45%; top: 50%; }
   }
 
   .touchdown-burst { position: relative; height: 0; pointer-events: none; }
@@ -399,8 +404,26 @@
         <line x1="280" y1="0" x2="280" y2="46" stroke="rgba(255,255,255,0.3)" stroke-width="1"></line>
         <text x="381" y="27" text-anchor="middle" font-size="7" font-weight="700" fill="rgba(255,255,255,0.65)" letter-spacing="1" transform="rotate(-90 381 27)">END ZONE</text>
       </svg>
-      <span class="defender">🙅</span>
-      <span class="runner">🏃</span>
+      <svg class="defender-fig" viewBox="0 0 24 24" fill="none" stroke="rgba(20,23,15,0.8)" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="8" cy="14" r="2.3" fill="rgba(20,23,15,0.8)" stroke="none"></circle>
+        <path d="M8 16.2 L14 18"></path>
+        <path d="M9.5 16.8 L15 15.3"></path>
+        <path d="M9.5 16.8 L14.5 18.8"></path>
+        <path d="M8 16.2 L4 19 L2 21"></path>
+        <path d="M8 16.2 L5 20.5 L7 22.5"></path>
+      </svg>
+      <svg class="runner-fig" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="13" cy="4.5" r="2.6" fill="#fff" stroke="none"></circle>
+        <path d="M13 7 L10.5 14"></path>
+        <path d="M10.5 14 L15 17 L18 14"></path>
+        <path d="M10.5 14 L7 17 L4 15"></path>
+        <path d="M11.5 9 L7 10.5 L5 8"></path>
+        <path d="M11.5 9 L16 10 L18.5 12"></path>
+        <g transform="rotate(-25 18.5 12)">
+          <ellipse cx="19" cy="12" rx="2.4" ry="1.4" fill="#8a4a24" stroke="none"></ellipse>
+          <line x1="17.5" y1="12" x2="20.5" y2="12" stroke="#fff" stroke-width="0.5"></line>
+        </g>
+      </svg>
     </div>
     <div class="touchdown-burst" id="touchdownBurst" aria-hidden="true">
       <span class="confetto"></span><span class="confetto"></span><span class="confetto"></span><span class="confetto"></span>
@@ -918,20 +941,62 @@
     return { value: 5, note: 'years of explicit forecast before the terminal value' };
   }
 
-  // Several real, recognizable names per archetype instead of one repeated name - which one
-  // a given company gets is picked deterministically from its ticker, so it's stable across
-  // reloads but varies company to company instead of every "franchise QB" being Tom Brady.
-  // The vet/rookie/comeback pools lean on well-worn, historically-settled sports narratives
-  // (a final big-money season, a doubted prospect, a celebrated injury comeback) rather than
-  // anything about a player's current, ongoing reputation.
+  // Real, recognizable names, picked on two independent factors rather than one:
+  // classifyPlayer() below already reads growth/beta/upside/fcfBasis to pick the archetype
+  // (position); market cap is a second, independent factor that picks which tier of names
+  // within that archetype to draw from - a $2T company and a $3B one landing in the same
+  // "workhorse running back" archetype shouldn't draw from the same name pool, since the
+  // scale of the comparison itself is part of what makes it apt. Each tier still has multiple
+  // names, and pickComp() below still hashes on the ticker so the choice is stable per company
+  // but varies within the tier. The vet/rookie/comeback pools lean on well-worn,
+  // historically-settled sports narratives (a final big-money season, a doubted prospect, a
+  // celebrated injury comeback) rather than anything about a player's current reputation.
   const PLAYER_COMP_POOLS = {
-    qb: ['Tom Brady', 'Patrick Mahomes', 'Joe Montana', 'Steve Young'],
-    wr: ['Tyreek Hill', 'Stefon Diggs', 'DeSean Jackson', 'Odell Beckham Jr.'],
-    rb: ['Derrick Henry', 'Adrian Peterson', 'Marshawn Lynch', 'Frank Gore'],
-    cb: ['Patrick Surtain II', 'Jalen Ramsey', 'Richard Sherman', 'Darrelle Revis'],
-    vet: ['Brett Favre', 'Joe Namath', 'John Elway', 'Emmitt Smith'],
-    rookie: ['Kurt Warner', 'Russell Wilson', 'Tony Romo', 'Warren Moon'],
-    comeback: ['Peyton Manning', 'Adrian Peterson', 'Alex Smith', 'Drew Brees'],
+    elite: {
+      mega: ['Tom Brady', 'Jerry Rice', 'Jim Brown', 'Lawrence Taylor'],
+      large: ['Patrick Mahomes', 'Randy Moss', 'Barry Sanders', 'Aaron Donald'],
+      small: ['Justin Jefferson', 'Christian McCaffrey', 'Micah Parsons', 'Ja’Marr Chase'],
+    },
+    qb: {
+      mega: ['Tom Brady', 'Joe Montana', 'Peyton Manning', 'John Elway'],
+      large: ['Patrick Mahomes', 'Aaron Rodgers', 'Drew Brees', 'Steve Young'],
+      small: ['Josh Allen', 'Jalen Hurts', 'Joe Burrow', 'Justin Herbert'],
+    },
+    wr: {
+      mega: ['Randy Moss', 'Jerry Rice', 'Terrell Owens', 'Michael Irvin'],
+      large: ['Tyreek Hill', 'Stefon Diggs', 'DeAndre Hopkins', 'Julio Jones'],
+      small: ['Ja’Marr Chase', 'DeSean Jackson', 'Odell Beckham Jr.', 'Tyler Lockett'],
+    },
+    rb: {
+      mega: ['Emmitt Smith', 'Walter Payton', 'Jim Brown', 'Barry Sanders'],
+      large: ['Derrick Henry', 'Adrian Peterson', 'LaDainian Tomlinson', 'Marshawn Lynch'],
+      small: ['Josh Jacobs', 'Frank Gore', 'Nick Chubb', 'Saquon Barkley'],
+    },
+    cb: {
+      mega: ['Deion Sanders', 'Darrell Green', 'Rod Woodson', 'Mel Blount'],
+      large: ['Richard Sherman', 'Darrelle Revis', 'Champ Bailey', 'Charles Woodson'],
+      small: ['Patrick Surtain II', 'Jalen Ramsey', 'Sauce Gardner', 'Jaire Alexander'],
+    },
+    og: {
+      mega: ['Anthony Muñoz', 'Jonathan Ogden', 'Larry Allen', 'Orlando Pace'],
+      large: ['Trent Williams', 'Zack Martin', 'Quenton Nelson', 'Tyron Smith'],
+      small: ['Penei Sewell', 'Lane Johnson', 'Joe Thuney', 'Chris Lindstrom'],
+    },
+    vet: {
+      mega: ['Brett Favre', 'John Elway', 'Emmitt Smith', 'Jerry Rice'],
+      large: ['Adrian Peterson', 'Larry Fitzgerald', 'Frank Gore', 'Charles Woodson'],
+      small: ['Matthew Stafford', 'Julio Jones', 'Le’Veon Bell', 'Odell Beckham Jr.'],
+    },
+    rookie: {
+      mega: ['Kurt Warner', 'Warren Moon', 'Rich Gannon', 'Jake Delhomme'],
+      large: ['Russell Wilson', 'Tony Romo', 'Priest Holmes', 'Antonio Gates'],
+      small: ['Brock Purdy', 'Puka Nacua', 'Tank Dell', 'Jayden Daniels'],
+    },
+    comeback: {
+      mega: ['Peyton Manning', 'Drew Brees', 'Tom Brady', 'Adrian Peterson'],
+      large: ['Alex Smith', 'Carson Palmer', 'Charles Woodson', 'Rob Gronkowski'],
+      small: ['Dak Prescott', 'Christian McCaffrey', 'Cam Akers', 'Saquon Barkley'],
+    },
   };
   // A multiplier of 31 is ≡ -1 (mod 4), which gives catastrophically bad distribution when
   // reduced mod a small pool size like 4 (nearly every ticker collapsed onto index 0 -
@@ -940,9 +1005,19 @@
   // only ones `% 4` looks at) stayed just as correlated. Fixed by adding a proper avalanche
   // finalizer (MurmurHash3's fmix32) that mixes the high bits into the low bits before the
   // mod - the standard fix for exactly this class of bug.
-  function pickComp(key, ticker) {
-    const pool = PLAYER_COMP_POOLS[key];
-    if (!pool) return null;
+  // Mega (>= $200B) / large (>= $10B) / small (< $10B) market cap - the second factor that
+  // decides which name tier within an archetype a company draws from.
+  function marketCapTier(marketCap) {
+    if (marketCap == null) return 'large';
+    if (marketCap >= 200e9) return 'mega';
+    if (marketCap >= 10e9) return 'large';
+    return 'small';
+  }
+
+  function pickComp(key, tier, ticker) {
+    const tiers = PLAYER_COMP_POOLS[key];
+    if (!tiers) return null;
+    const pool = tiers[tier] || tiers.large;
     let hash = 0x811c9dc5;
     for (let i = 0; i < ticker.length; i++) {
       hash ^= ticker.charCodeAt(i);
@@ -1110,6 +1185,11 @@
       $('fairValue').innerHTML = '—';
       $('verdictPill').textContent = '';
       $('verdictSub').textContent = '';
+      // These make confident-sounding claims ("plays like X", analyst consensus) that would
+      // otherwise be left showing stale content from whatever company was looked up right
+      // before this one, since none of the render calls below run on this bail-out path.
+      $('playerCompCard').hidden = true;
+      $('analystCard').hidden = true;
       return;
     }
 
@@ -1546,21 +1626,30 @@
   // negative - declining production, unproven - deliberately carry no specific real name,
   // so no identifiable person is tied to automated "overpaying/bust" commentary about a stock.
   const PLAYER_ARCHETYPES = {
+    elite: { position: 'The Generational Talent', color: '--accent', number: 1 },
     qb: { position: 'The Franchise Quarterback', color: '--accent', number: 12 },
     wr: { position: 'The Boom-or-Bust Deep Threat', color: '--critical', number: 80 },
     rb: { position: 'The Workhorse Running Back', color: '--good', number: 22 },
     cb: { position: 'The Shutdown Cornerback', color: '--info', number: 24 },
+    og: { position: 'The Anchor Left Tackle', color: '--ink-faint', number: 76 },
     vet: { position: 'The Aging Veteran, Expensive Contract', color: '--warn', number: 7 },
     rookie: { position: 'The Practice-Squad Prospect', color: '--ink-faint', number: 0 },
     comeback: { position: 'Coming Off an Injury Year', color: '--info', number: 44 },
   };
 
+  // Ordered so the rarest, most specific read wins first: a genuinely negative or outlier
+  // FCF history overrides everything else (rookie/comeback), then the standout "everything
+  // is working" combo (elite) gets first crack before the plainer qb/wr/vet/og/cb/rb buckets
+  // below it, which are each keyed off just one or two of growth/beta/upside so they'd
+  // otherwise happily match an elite-caliber profile too.
   function classifyPlayer(growth, beta, upside, fcfBasis) {
     if (fcfBasis === 'negative') return 'rookie';
     if (fcfBasis === 'normalized') return 'comeback';
+    if (growth >= 0.25 && beta <= 1.15 && upside >= -0.05) return 'elite';
     if (growth >= 0.15 && beta <= 1.15 && upside >= -0.05) return 'qb';
     if (growth >= 0.15) return 'wr';
     if (upside <= -0.15) return 'vet';
+    if (growth <= 0.05 && beta <= 0.85 && Math.abs(upside) <= 0.1) return 'og';
     if (beta <= 0.9 && upside >= 0) return 'cb';
     return 'rb';
   }
@@ -1588,7 +1677,10 @@
     card.hidden = false;
 
     const ticker = current.company.ticker;
-    const comp = pickComp(key, ticker);
+    const shares = current.financials && current.financials.latestShares;
+    const marketCap = (price && shares) ? price * shares : null;
+    const tier = marketCapTier(marketCap);
+    const comp = pickComp(key, tier, ticker);
 
     $('playerArt').innerHTML = renderPlayerArt(archetype.color, archetype.number);
     const headlineEl = $('playerHeadline');
@@ -1598,12 +1690,14 @@
     } else {
       headlineEl.hidden = true;
     }
-    $('playerPosition').textContent = archetype.position;
+    $('playerPosition').textContent = archetype.position + (marketCap ? ' · ' + fmtBig(marketCap) + ' cap' : '');
     const gPct = (growth * 100).toFixed(1);
     const bStr = beta.toFixed(2);
     const uPct = Math.abs(upside * 100).toFixed(1);
     let why;
-    if (key === 'qb') {
+    if (key === 'elite') {
+      why = ticker + ' checks every box at once — <strong>' + gPct + '%/yr</strong> FCFF growth, a market-average risk profile (β ' + bStr + '), and a price that isn’t stretched. That combination is rare enough that it doesn’t just make the roster — it’s a first-ballot résumé.';
+    } else if (key === 'qb') {
       why = ticker + ' is putting up <strong>' + gPct + '%/yr</strong> FCFF growth with a market-average risk profile (β ' + bStr + '), and the price isn’t stretched — the complete package: real production without excessive risk. That’s a franchise quarterback’s résumé.';
     } else if (key === 'wr') {
       why = ticker + ' is putting up big numbers — <strong>' + gPct + '%/yr</strong> FCFF growth — but with a beta of ' + bStr + ', the ride is volatile. Explosive upside, but a cold quarter can lose the game just as fast. Boom-or-bust, every drive.';
@@ -1611,6 +1705,8 @@
       why = ticker + ' isn’t flashy — ' + gPct + '%/yr growth, beta ' + bStr + ' — but it just keeps gaining yards, series after series. No drama, steady production: the kind of player a team is built around.';
     } else if (key === 'cb') {
       why = ticker + ' plays it safe: a low beta (' + bStr + '), and the model doesn’t think you’re overpaying at today’s price. No single stat jumps off the page — it just reliably doesn’t let you down.';
+    } else if (key === 'og') {
+      why = ticker + ' will never make a highlight reel — growth is a modest ' + gPct + '%/yr and beta is a sleepy ' + bStr + ' — but nobody drafts a left tackle for the stat sheet either. Unglamorous, low-risk, and exactly priced for what it is.';
     } else if (key === 'vet') {
       why = ticker + '’s growth has slowed to ' + gPct + '%/yr, and at today’s price the model sees about <strong>' + uPct + '% downside</strong> — you’re paying premium-contract money for production that’s past its peak burst.';
     } else if (key === 'comeback') {
