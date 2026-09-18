@@ -206,61 +206,81 @@ function effectiveTaxRate(pretaxPoints, taxPoints) {
   return Math.min(0.3, Math.max(0.15, avg));
 }
 
-function extractFinancials(companyFacts) {
+// Monetary series come back tagged with the currency they were reported in (`p.currency`);
+// share-count series carry `currency: null` and pass through untouched. Converting here
+// rather than inside annualPointsFor keeps that function currency-agnostic and lets the
+// caller decide the rate once per company instead of threading it through every tag list.
+function toUsd(points, fxRate) {
+  if (fxRate === 1) return points;
+  return points.map((p) => (p.currency ? { ...p, val: p.val * fxRate } : p));
+}
+
+function extractFinancials(companyFacts, fxRate = 1) {
   const facts = companyFacts.facts || {};
 
-  const ocf = annualPointsFor(facts, 'us-gaap', [
-    'NetCashProvidedByUsedInOperatingActivities',
-    'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations',
-  ]);
-  const capex = annualPointsFor(facts, 'us-gaap', [
-    'PaymentsToAcquirePropertyPlantAndEquipment',
-    'PaymentsForCapitalImprovements',
-    'PaymentsToAcquireProductiveAssets',
-  ]);
-  const netIncome = annualPointsFor(facts, 'us-gaap', ['NetIncomeLoss']);
-  const revenue = annualPointsFor(facts, 'us-gaap', [
-    'RevenueFromContractWithCustomerExcludingAssessedTax',
-    'Revenues',
-  ]);
-  const opIncome = annualPointsFor(facts, 'us-gaap', ['OperatingIncomeLoss']);
+  const ocf = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'NetCashProvidedByUsedInOperatingActivities'],
+    ['us-gaap', 'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations'],
+  ]), fxRate);
+  const capex = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'PaymentsToAcquirePropertyPlantAndEquipment'],
+    ['us-gaap', 'PaymentsForCapitalImprovements'],
+    ['us-gaap', 'PaymentsToAcquireProductiveAssets'],
+  ]), fxRate);
+  const netIncome = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'NetIncomeLoss'],
+    ['ifrs-full', 'ProfitLoss'],
+  ]), fxRate);
+  const revenue = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'RevenueFromContractWithCustomerExcludingAssessedTax'],
+    ['us-gaap', 'Revenues'],
+    ['ifrs-full', 'Revenue'],
+  ]), fxRate);
+  const opIncome = toUsd(annualPointsFor(facts, [['us-gaap', 'OperatingIncomeLoss']]), fxRate);
   // Not every filer tags a single combined D&A figure - Microsoft, for one, splits it into
   // separate Depreciation and AmortizationOfIntangibleAssets concepts. Try the combined tag
   // first; if that's empty, sum the two separate series by period end date instead of
   // returning nothing (which was silently killing the EV/EBITDA comp and the exit-multiple
   // terminal-value cross-check for exactly the filers that split it out).
-  let da = annualPointsFor(facts, 'us-gaap', [
-    'DepreciationDepletionAndAmortization',
-    'DepreciationAmortizationAndAccretionNet',
-    'DepreciationAndAmortization',
-  ]);
+  let da = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'DepreciationDepletionAndAmortization'],
+    ['us-gaap', 'DepreciationAmortizationAndAccretionNet'],
+    ['us-gaap', 'DepreciationAndAmortization'],
+    ['ifrs-full', 'DepreciationAndAmortisationExpense'],
+  ]), fxRate);
   if (!da.length) {
-    const depreciationOnly = annualPointsFor(facts, 'us-gaap', ['Depreciation']);
-    const amortizationOnly = annualPointsFor(facts, 'us-gaap', [
-      'AmortizationOfIntangibleAssets',
-      'FiniteLivedIntangibleAssetsAmortizationExpense',
-    ]);
+    const depreciationOnly = toUsd(annualPointsFor(facts, [['us-gaap', 'Depreciation']]), fxRate);
+    const amortizationOnly = toUsd(annualPointsFor(facts, [
+      ['us-gaap', 'AmortizationOfIntangibleAssets'],
+      ['us-gaap', 'FiniteLivedIntangibleAssetsAmortizationExpense'],
+    ]), fxRate);
     if (depreciationOnly.length) {
       const amortByEnd = new Map(amortizationOnly.map((p) => [p.end, p.val]));
       da = depreciationOnly.map((p) => ({ fy: p.fy, end: p.end, val: p.val + (amortByEnd.get(p.end) || 0) }));
     }
   }
-  const cash = annualPointsFor(facts, 'us-gaap', [
-    'CashAndCashEquivalentsAtCarryingValue',
-    'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents',
-  ]);
-  const longDebt = annualPointsFor(facts, 'us-gaap', ['LongTermDebtNoncurrent', 'LongTermDebt']);
-  const shortDebt = annualPointsFor(facts, 'us-gaap', ['LongTermDebtCurrent', 'DebtCurrent']);
-  const sharesA = annualPointsFor(facts, 'dei', ['EntityCommonStockSharesOutstanding']);
-  const sharesB = annualPointsFor(facts, 'us-gaap', ['CommonStockSharesOutstanding']);
-  const pretaxIncome = annualPointsFor(facts, 'us-gaap', [
-    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',
-    'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments',
-  ]);
-  const taxExpense = annualPointsFor(facts, 'us-gaap', ['IncomeTaxExpenseBenefit']);
-  const interestExpense = annualPointsFor(facts, 'us-gaap', [
-    'InterestExpense', 'InterestExpenseDebt', 'InterestAndDebtExpense',
-  ]);
+  const cash = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'CashAndCashEquivalentsAtCarryingValue'],
+    ['us-gaap', 'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents'],
+    ['ifrs-full', 'CashAndCashEquivalents'],
+  ]), fxRate);
+  const longDebt = toUsd(annualPointsFor(facts, [['us-gaap', 'LongTermDebtNoncurrent'], ['us-gaap', 'LongTermDebt']]), fxRate);
+  const shortDebt = toUsd(annualPointsFor(facts, [['us-gaap', 'LongTermDebtCurrent'], ['us-gaap', 'DebtCurrent']]), fxRate);
+  const sharesA = annualPointsFor(facts, [['dei', 'EntityCommonStockSharesOutstanding']]);
+  const sharesB = annualPointsFor(facts, [['us-gaap', 'CommonStockSharesOutstanding']]);
+  const pretaxIncome = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest'],
+    ['us-gaap', 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments'],
+    ['ifrs-full', 'ProfitLossBeforeTax'],
+  ]), fxRate);
+  const taxExpense = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'IncomeTaxExpenseBenefit'],
+    ['ifrs-full', 'IncomeTaxExpenseContinuingOperations'],
+  ]), fxRate);
+  const interestExpense = toUsd(annualPointsFor(facts, [
+    ['us-gaap', 'InterestExpense'], ['us-gaap', 'InterestExpenseDebt'], ['us-gaap', 'InterestAndDebtExpense'],
+    ['ifrs-full', 'InterestExpense'],
+  ]), fxRate);
 
   const taxRate = effectiveTaxRate(pretaxIncome, taxExpense);
 
@@ -626,7 +646,15 @@ async function handleValuation(req, res, query) {
   const riskFreeRate = riskFreeResult.status === 'fulfilled' ? riskFreeResult.value : 0.042;
   const business = businessResult.status === 'fulfilled' ? businessResult.value : null;
 
-  const fin = extractFinancials(companyFacts);
+  const reportingCurrency = detectCurrency(companyFacts.facts || {});
+  const fxRate = await fetchFxRateToUsd(reportingCurrency);
+  if (reportingCurrency !== 'USD' && fxRate == null) {
+    return sendJson(res, 502, { error: `${tickerQ} reports in ${reportingCurrency}, which this tool doesn't yet have an FX rate for.` });
+  }
+
+  const fin = extractFinancials(companyFacts, fxRate || 1);
+  fin.reportingCurrency = reportingCurrency;
+  fin.fxRateToUsd = fxRate || 1;
   const fcfGrowth = cagr(fin.fcfHistory, 'fcf');
   const revGrowth = cagr(fin.revenueHistory);
   const netDebt = (fin.latestLongDebt || 0) + (fin.latestShortDebt || 0) - (fin.latestCash || 0);
